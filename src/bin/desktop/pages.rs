@@ -114,7 +114,20 @@ pub fn poster_card(ui: &mut Ui, env: &mut Env, c: &Card, width: f32) -> bool {
         ui.set_width(width);
         ui.spacing_mut().item_spacing.y = 2.0;
         let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
-        let hover = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.15);
+        // The play and remove buttons sit on top of the poster. They are always registered (and
+        // only drawn on hover): hovering them takes the hover from the poster, so tying them to
+        // the poster's `hovered()` made them flicker in and out and swallowed the click.
+        let full = rect.expand(4.0);
+        let play_resp = ui
+            .interact(Rect::from_center_size(full.center(), vec2(56.0, 56.0)), resp.id.with("play"), Sense::click())
+            .on_hover_cursor(CursorIcon::PointingHand)
+            .on_hover_text(if c.progress.is_some() { "Continue" } else { "Play" });
+        let dismiss_rect = Rect::from_center_size(full.right_top() + vec2(-18.0, 18.0), vec2(26.0, 26.0));
+        let dismiss_resp = c.dismissable.then(|| {
+            ui.interact(dismiss_rect, resp.id.with("dismiss"), Sense::click()).on_hover_text("Remove from Continue watching")
+        });
+        let hovered = resp.contains_pointer();
+        let hover = ui.ctx().animate_bool_with_time(resp.id, hovered, 0.15);
         let r = rect.expand(hover * 4.0);
         let p = ui.painter();
         if hover > 0.0 {
@@ -138,32 +151,26 @@ pub fn poster_card(ui: &mut Ui, env: &mut Env, c: &Card, width: f32) -> bool {
             p.galley(pos2(chip.left() + 19.0, chip.center().y - galley.size().y / 2.0), galley, Color32::WHITE);
         }
         // The play button starts playback; the rest of the poster opens the details.
-        let mut play = false;
         if hover > 0.0 {
-            let pr = ui
-                .interact(Rect::from_center_size(r.center(), vec2(52.0, 52.0)), resp.id.with("play"), Sense::click())
-                .on_hover_text(if c.progress.is_some() { "Continue" } else { "Play" });
-            let big = ui.ctx().animate_bool_with_time(pr.id, pr.hovered(), 0.12);
+            let big = ui.ctx().animate_bool_with_time(play_resp.id, play_resp.hovered(), 0.12);
             p.rect_filled(r, 12, Color32::from_black_alpha((70.0 * hover) as u8));
             p.circle_filled(r.center(), 24.0 + 4.0 * big, ACCENT.lerp_to_gamma(ACCENT_HI, big).gamma_multiply(hover));
             paint_icon(p, Rect::from_center_size(r.center() + vec2(2.0, 0.0), vec2(20.0, 20.0)), Icon::Play, Color32::WHITE.gamma_multiply(hover));
             p.rect_stroke(r, 12, Stroke::new(2.0, ACCENT_HI.gamma_multiply(hover)), StrokeKind::Inside);
-            play = pr.clicked();
         }
+        let play = play_resp.clicked();
         if let Some(f) = c.progress {
             progress_bar(&p.with_clip_rect(r.shrink2(vec2(6.0, 0.0))), r.shrink2(vec2(10.0, 6.0)), f);
         }
         let resp = resp.on_hover_cursor(CursorIcon::PointingHand);
-        let mut clicked = resp.clicked() && !play;
-        if c.dismissable && (resp.hovered() || hover > 0.5) {
-            let x = Rect::from_center_size(r.right_top() + vec2(-18.0, 18.0), vec2(26.0, 26.0));
-            let xr = ui.interact(x, resp.id.with("dismiss"), Sense::click()).on_hover_text("Remove from Continue watching");
-            p.circle_filled(x.center(), 13.0, if xr.hovered() { ERR } else { Color32::from_black_alpha(190) });
-            paint_icon(p, x.shrink(7.0), Icon::Close, Color32::WHITE);
-            if xr.clicked() {
-                dismiss = true;
-                clicked = false;
+        let clicked = resp.clicked();
+        if let Some(xr) = dismiss_resp {
+            if hover > 0.0 {
+                let bg = if xr.hovered() { ERR } else { Color32::from_black_alpha(190) };
+                p.circle_filled(dismiss_rect.center(), 13.0, bg.gamma_multiply(hover));
+                paint_icon(p, dismiss_rect.shrink(7.0), Icon::Close, Color32::WHITE.gamma_multiply(hover));
             }
+            dismiss = xr.clicked();
         }
         ui.add_space(6.0);
         ui.add(Label::new(RichText::new(c.name).font(semibold(13.5))).truncate());
