@@ -37,7 +37,12 @@ libswscale-dev libswresample-dev libavdevice-dev libavfilter-dev pkg-config libc
   All languages are in the player's subtitles menu. Z / X shift the timing, and legacy
   Windows-1250 files are decoded correctly.
 - **Torrent streaming** with [librqbit](https://github.com/ikatson/rqbit). It supports HTTP range
-  requests and seeking, downloads only the selected file, and deletes the previous torrent when you switch.
+  requests and seeking, and downloads only the selected file.
+- **2 GB cache**: what you've watched stays on disk, together with the torrent metadata. Replaying
+  (even after a restart) starts instantly, with no waiting for peers or downloading again. The
+  least recently played torrents are removed once the cache is full, and the one you're watching
+  is always kept. Set `KINORA_CACHE_GB` to change the size. The cache is in
+  `~/Library/Caches/kinora/` (macOS) or `~/.cache/kinora/`.
 - **Embedded player** (FFmpeg + cpal) for any codec FFmpeg supports (HEVC, AC3, DTS…), with seeking,
   audio track and subtitle selection, full screen, resume, and "up next". An external player is still one click away.
 - **Library** and **Continue watching**, stored in `~/.config/kinora/`.
@@ -80,8 +85,8 @@ mp4/x264; MKV/HEVC/AC3 need the desktop app or an external player.
 ## Privacy & security
 
 The HTTP server listens only on `127.0.0.1` and rejects requests for any other `Host` header, which
-blocks DNS rebinding. Stream URLs from addons must be `http(s)`. Torrent data is temporary and lives
-in `$TMPDIR/kinora*`.
+blocks DNS rebinding. Stream URLs from addons must be `http(s)`. Cached torrent data stays in the
+cache directory above, and you can delete it at any time.
 
 ## Disclaimer
 

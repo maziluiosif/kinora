@@ -63,7 +63,7 @@ pub struct PlayReq {
 }
 
 impl Core {
-    /// Loads the config from `~/.config/kinora/` and keeps torrent data in `cache_dir`.
+    /// Loads the config from `~/.config/kinora/` and caches torrents in `cache_dir`.
     pub async fn new(port: u16, cache_dir: PathBuf) -> Result<Core> {
         let home = PathBuf::from(std::env::var("HOME").context("HOME not set")?);
         let config_dir = home.join(".config/kinora");
@@ -86,7 +86,7 @@ impl Core {
             .build()?;
         Ok(Core {
             addons: Addons::load(http, config_dir.join("addons.json")).await,
-            engine: Engine::new(cache_dir).await?,
+            engine: Engine::new(cache_dir, cache_limit()).await?,
             library: Library::load(config_dir.join("library.json")),
             fallback_subs: tokio::sync::OnceCell::new(),
             port,
@@ -278,4 +278,27 @@ pub(crate) fn write_atomic(path: &std::path::Path, data: &[u8]) -> Result<()> {
     std::fs::write(&tmp, data)?;
     std::fs::rename(&tmp, path)?;
     Ok(())
+}
+
+/// Where torrent data is cached: `~/Library/Caches/kinora/{name}` on macOS,
+/// `$XDG_CACHE_HOME/kinora/{name}` (or `~/.cache/...`) elsewhere.
+pub fn cache_dir(name: &str) -> PathBuf {
+    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
+    let base = if cfg!(target_os = "macos") {
+        home.join("Library/Caches")
+    } else {
+        std::env::var_os("XDG_CACHE_HOME").map(PathBuf::from).unwrap_or_else(|| home.join(".cache"))
+    };
+    // Before the cache, torrent data went to a temporary directory that was wiped on start.
+    let _ = std::fs::remove_dir_all(std::env::temp_dir().join(if name == "web" { "kinora" } else { "kinora-desktop" }));
+    base.join("kinora").join(name)
+}
+
+/// The cache size limit: `KINORA_CACHE_GB` (may be fractional) or 2 GB.
+fn cache_limit() -> u64 {
+    std::env::var("KINORA_CACHE_GB")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .filter(|gb| *gb >= 0.0)
+        .map_or(engine::DEFAULT_CACHE_LIMIT, |gb| (gb * (1u64 << 30) as f64) as u64)
 }

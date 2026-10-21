@@ -67,7 +67,7 @@ async fn start() -> anyhow::Result<Arc<Core>> {
         Err(_) => tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?,
     };
     let port = listener.local_addr()?.port();
-    let core = Arc::new(Core::new(port, std::env::temp_dir().join("kinora-desktop")).await?);
+    let core = Arc::new(Core::new(port, kinora::cache_dir("desktop")).await?);
     let router = server::router(core.clone());
     tokio::spawn(async move {
         if let Err(e) = axum::serve(listener, router).await {

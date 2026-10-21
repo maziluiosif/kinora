@@ -15,7 +15,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let core = Arc::new(Core::new(PORT, std::env::temp_dir().join("kinora")).await?);
+    let core = Arc::new(Core::new(PORT, kinora::cache_dir("web")).await?);
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", PORT)).await?;
     let url = format!("http://127.0.0.1:{PORT}/");
     tracing::info!("kinora running at {url}");
