@@ -434,13 +434,49 @@ pub fn section_title(ui: &mut Ui, text: &str) {
     ui.label(RichText::new(text).font(bold(19.0)));
 }
 
+/// One-line page heading with an optional muted note after it.
 pub fn page_title(ui: &mut Ui, title: &str, sub: &str) {
-    ui.add_space(6.0);
-    ui.label(RichText::new(title).font(bold(28.0)));
-    if !sub.is_empty() {
-        ui.label(muted(sub, 13.5));
-    }
-    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 12.0;
+        ui.label(RichText::new(title).font(bold(21.0)));
+        if !sub.is_empty() {
+            ui.label(muted(sub, 13.5));
+        }
+    });
+    ui.add_space(8.0);
+}
+
+/// A row of mutually exclusive options in one pill; returns the index clicked.
+pub fn segmented(ui: &mut Ui, options: &[&str], selected: Option<usize>) -> Option<usize> {
+    let mut picked = None;
+    egui::Frame::new().fill(PANEL2).corner_radius(18).inner_margin(3).show(ui, |ui| {
+        ui.spacing_mut().item_spacing.x = 2.0;
+        ui.horizontal(|ui| {
+            for (i, text) in options.iter().enumerate() {
+                let galley = ui.painter().layout_no_wrap(text.to_string(), semibold(13.0), Color32::PLACEHOLDER);
+                let (rect, resp) = ui.allocate_exact_size(vec2(galley.size().x + 26.0, 30.0), Sense::click());
+                let on = selected == Some(i);
+                let t = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.12);
+                if on {
+                    ui.painter().rect_filled(rect, 15, ACCENT);
+                } else if t > 0.0 {
+                    ui.painter().rect_filled(rect, 15, Color32::from_white_alpha((14.0 * t) as u8));
+                }
+                let fg = if on { Color32::WHITE } else { MUTED.lerp_to_gamma(TEXT, t) };
+                ui.painter().galley(rect.center() - galley.size() / 2.0, galley, fg);
+                if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() && !on {
+                    picked = Some(i);
+                }
+            }
+        });
+    });
+    picked
+}
+
+/// A thin vertical rule between groups of controls in a row.
+pub fn divider(ui: &mut Ui) {
+    let (rect, _) = ui.allocate_exact_size(vec2(9.0, 22.0), Sense::hover());
+    ui.painter().vline(rect.center().x, rect.y_range(), Stroke::new(1.0, LINE));
 }
 
 /// Centered icon, title and hint for empty or failed pages.

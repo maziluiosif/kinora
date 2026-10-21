@@ -15,7 +15,7 @@ use kinora::library::{LibItem, LibUpdate};
 use crate::kit::*;
 use crate::model::{MetaPreview, SearchRow, parse_metas};
 use crate::task::Task;
-use crate::{Env, Route};
+use crate::{Env, HEADER_H, Route};
 
 const CARD_W: f32 = 150.0;
 const GAP: f32 = 16.0;
@@ -350,10 +350,18 @@ impl Board {
     }
 
     pub fn ui(&mut self, ui: &mut Ui, env: &mut Env) {
-        ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
-            ui.set_width(ui.available_width() - 16.0);
-            self.hero_ui(ui, env);
+        let out = ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+            if !self.hero_ui(ui, env) {
+                ui.add_space(HEADER_H + 6.0);
+            }
+            Frame::new().inner_margin(Margin { left: 24, right: 28, top: 0, bottom: 0 }).show(ui, |ui| self.rows_ui(ui, env));
+        });
+        // The header stays see-through over the hero and fills in once the rows scroll under it.
+        env.header_solid = ((out.state.offset.y - 40.0) / 120.0).clamp(0.0, 1.0);
+    }
 
+    fn rows_ui(&mut self, ui: &mut Ui, env: &mut Env) {
+        {
             let mut cw: Vec<LibItem> = env.library.iter().filter(|i| i.last_video.is_some()).cloned().collect();
             cw.sort_by_key(|i| std::cmp::Reverse(i.last_watched));
             if !cw.is_empty() {
@@ -401,25 +409,26 @@ impl Board {
                 self.rows[i].1 = fetch_catalog(env, &self.rows[i].0, 0);
             }
             ui.add_space(32.0);
-        });
+        }
     }
 
-    /// The rotating spotlight of the first catalog's titles that have artwork.
-    fn hero_ui(&mut self, ui: &mut Ui, env: &mut Env) {
-        let Some((_, task)) = self.rows.first_mut() else { return };
+    /// The rotating spotlight of the first catalog's titles that have artwork, edge to edge and
+    /// up under the header. Returns whether it took any space.
+    fn hero_ui(&mut self, ui: &mut Ui, env: &mut Env) -> bool {
+        let Some((_, task)) = self.rows.first_mut() else { return false };
         let width = ui.available_width();
-        let height = (width * 0.36).clamp(300.0, 460.0);
+        let height = (width * 0.42).clamp(380.0, 560.0);
         let picks: Vec<MetaPreview> = match task.get() {
             None => {
                 let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
-                skeleton(ui, rect, 18);
-                return;
+                skeleton(ui, rect, 0);
+                return true;
             }
             Some(Ok(metas)) => metas.iter().filter(|m| m.background.is_some()).take(6).cloned().collect(),
             Some(Err(_)) => Vec::new(),
         };
         if picks.is_empty() {
-            return;
+            return false;
         }
         let (rect, resp) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
         if self.hero_since.elapsed() >= HERO_EVERY && !resp.hovered() {
@@ -434,15 +443,16 @@ impl Board {
         }
 
         let p = ui.painter_at(rect);
-        p.rect_filled(rect, 18, PANEL);
+        p.rect_filled(rect, 0, PANEL);
         if let Some(bg) = &m.background {
-            paint_cover(ui, bg, rect, 18, Color32::WHITE.gamma_multiply(fade));
+            paint_cover(ui, bg, rect, 0, Color32::WHITE.gamma_multiply(fade));
         }
         gradient_h(&p, rect.with_max_x(rect.left() + rect.width() * 0.7), BG.gamma_multiply(0.95), Color32::TRANSPARENT);
-        gradient_v(&p, rect.with_min_y(rect.center().y), Color32::TRANSPARENT, BG.gamma_multiply(0.85));
-        p.rect_stroke(rect, 18, Stroke::new(1.0, Color32::from_white_alpha(14)), StrokeKind::Inside);
+        // Fades into the page at the bottom, so the first row sits on the art's tail.
+        gradient_v(&p, rect.with_min_y(rect.top() + rect.height() * 0.45), Color32::TRANSPARENT, BG);
 
-        let inner = Rect::from_min_max(rect.min + vec2(40.0, 32.0), pos2(rect.left() + width * 0.5, rect.bottom() - 32.0));
+        let inner =
+            Rect::from_min_max(rect.min + vec2(44.0, HEADER_H + 24.0), pos2(rect.left() + width * 0.5, rect.bottom() - 36.0));
         ui.scope_builder(UiBuilder::new().max_rect(inner).layout(Layout::bottom_up(Align::Min)), |ui| {
             ui.multiply_opacity(fade.max(0.3));
             let saved = env.lib_item(&m.id).is_some_and(|i| i.saved);
@@ -491,7 +501,7 @@ impl Board {
         let n = picks.len();
         let dots_w = n as f32 * 18.0;
         for i in 0..n {
-            let c = pos2(rect.right() - 32.0 - dots_w + i as f32 * 18.0 + 9.0, rect.bottom() - 26.0);
+            let c = pos2(rect.right() - 40.0 - dots_w + i as f32 * 18.0 + 9.0, rect.bottom() - 40.0);
             let r = Rect::from_center_size(c, vec2(16.0, 16.0));
             let dot = ui.interact(r, Id::new(("hero-dot", i)), Sense::click()).on_hover_cursor(CursorIcon::PointingHand);
             let active = i == self.hero % n;
@@ -503,6 +513,7 @@ impl Board {
                 self.hero_since = Instant::now();
             }
         }
+        true
     }
 }
 
@@ -563,13 +574,12 @@ impl Discover {
             self.loading = None;
         }
 
-        page_title(ui, "Discover", "Browse every catalog of your addons");
         if self.cats.is_empty() {
             empty_state(ui, Icon::Compass, "Nothing to discover", "Install an addon with catalogs from the Addons page.");
             return;
         }
 
-        // Type tabs, then the catalogs of that type.
+        // One filter row: the type, then the catalogs of that type.
         let mut kinds: Vec<&str> = Vec::new();
         for c in &self.cats {
             if !kinds.contains(&c.kind.as_str()) {
@@ -578,20 +588,17 @@ impl Discover {
         }
         let kind = self.cats[self.sel].kind.clone();
         let mut pick = None;
-        ui.horizontal_wrapped(|ui| {
-            for k in &kinds {
-                if chip(ui, kind_name(k, true), *k == kind).clicked() {
-                    pick = self.cats.iter().position(|c| c.kind == *k);
-                }
-            }
-        });
-        ui.add_space(4.0);
         let addons: Vec<&str> = self.cats.iter().filter(|c| c.kind == kind).map(|c| c.addon.as_str()).collect();
         let many_addons = addons.iter().any(|a| *a != addons[0]);
         ui.horizontal_wrapped(|ui| {
+            let names: Vec<&str> = kinds.iter().map(|k| kind_name(k, true)).collect();
+            if let Some(k) = segmented(ui, &names, kinds.iter().position(|k| *k == kind)) {
+                pick = self.cats.iter().position(|c| c.kind == kinds[k]);
+            }
+            divider(ui);
             for (i, c) in self.cats.iter().enumerate().filter(|(_, c)| c.kind == kind) {
                 let label = if many_addons { format!("{} · {}", c.name, c.addon_name) } else { c.name.clone() };
-                if button_sized(ui, if i == self.sel { Kind::Secondary } else { Kind::Ghost }, None, &label, 30.0).clicked() {
+                if chip(ui, &label, i == self.sel).clicked() {
                     pick = Some(i);
                 }
             }
@@ -599,7 +606,7 @@ impl Discover {
         if let Some(i) = pick {
             self.select(env, i);
         }
-        ui.add_space(10.0);
+        ui.add_space(12.0);
 
         let out = ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             if self.items.is_empty() && self.loading.is_some() {
@@ -704,12 +711,6 @@ pub struct LibraryPage {
 impl LibraryPage {
     pub fn ui(&mut self, ui: &mut Ui, env: &mut Env) {
         let mut items: Vec<LibItem> = env.library.iter().filter(|i| i.saved).cloned().collect();
-        let sub = match items.len() {
-            0 => String::new(),
-            1 => "1 title".into(),
-            n => format!("{n} titles"),
-        };
-        page_title(ui, "Library", &sub);
         if items.is_empty() {
             empty_state(ui, Icon::Bookmark, "Your library is empty", "Save titles with “Add to library” to find them here.");
             ui.vertical_centered(|ui| {
@@ -723,30 +724,33 @@ impl LibraryPage {
         let mut kinds: Vec<String> = items.iter().map(|i| i.kind.clone()).collect();
         kinds.sort();
         kinds.dedup();
-        ui.horizontal(|ui| {
-            if chip(ui, "All", self.kind.is_none()).clicked() {
-                self.kind = None;
-            }
-            for k in &kinds {
-                if chip(ui, kind_name(k, true), self.kind.as_ref() == Some(k)).clicked() {
-                    self.kind = Some(k.clone());
-                }
-            }
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.add_space(14.0);
-                if chip(ui, "A–Z", self.by_name).clicked() {
-                    self.by_name = true;
-                }
-                if chip(ui, "Recent", !self.by_name).clicked() {
-                    self.by_name = false;
-                }
-                ui.label(muted("Sort", 12.5));
-            });
-        });
-        ui.add_space(12.0);
         if let Some(k) = &self.kind {
             items.retain(|i| &i.kind == k);
         }
+        ui.horizontal(|ui| {
+            let mut names = vec!["All"];
+            names.extend(kinds.iter().map(|k| kind_name(k, true)));
+            let current = match &self.kind {
+                None => Some(0),
+                Some(k) => kinds.iter().position(|x| x == k).map(|i| i + 1),
+            };
+            if let Some(i) = segmented(ui, &names, current) {
+                self.kind = if i == 0 { None } else { Some(kinds[i - 1].clone()) };
+            }
+            let count = match items.len() {
+                1 => "1 title".to_string(),
+                n => format!("{n} titles"),
+            };
+            ui.label(muted(count, 13.0));
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.add_space(14.0);
+                // Laid out right to left, so the options go in reverse.
+                if let Some(i) = segmented(ui, &["A–Z", "Recent"], Some(if self.by_name { 0 } else { 1 })) {
+                    self.by_name = i == 0;
+                }
+            });
+        });
+        ui.add_space(12.0);
         if self.by_name {
             items.sort_by_key(|i| i.name.to_lowercase());
         } else {
@@ -794,11 +798,10 @@ impl AddonsPage {
             self.confirm = None;
         }
 
-        page_title(ui, "Addons", "Addons provide catalogs, metadata and streams.");
         Frame::new().fill(PANEL).stroke(Stroke::new(1.0, LINE)).corner_radius(14).inner_margin(16).show(ui, |ui| {
             ui.set_width(ui.available_width() - 16.0);
             ui.label(strong("Install an addon", 15.0));
-            ui.label(muted("Paste the addon's manifest URL (it ends in /manifest.json).", 12.5));
+            ui.label(muted("Addons provide catalogs, metadata and streams. Paste one's manifest URL (it ends in /manifest.json).", 12.5));
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 let busy = self.installing.is_some();

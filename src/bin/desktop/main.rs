@@ -16,8 +16,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use eframe::egui::{
-    self, Align2, Color32, CursorIcon, Frame, Id, Key, Margin, Modifiers, Panel, Rect, RichText, Sense, TextEdit, Ui,
-    pos2, vec2,
+    self, Align, Align2, Color32, CursorIcon, Frame, Id, Key, Layout, Margin, Modifiers, Rect, RichText, Sense, TextEdit,
+    Ui, UiBuilder, pos2, vec2,
 };
 use kinora::library::{LibItem, LibUpdate};
 use kinora::{CatalogRef, Core, server};
@@ -33,6 +33,8 @@ use task::Task;
 /// The web version uses 11471.
 const PORT: u16 = 11472;
 const SEARCH_ID: &str = "search";
+/// Height of the header bar; pages under it start this far down (or draw art behind it).
+pub const HEADER_H: f32 = 56.0;
 
 fn main() -> eframe::Result {
     tracing_subscriber::fmt()
@@ -114,6 +116,9 @@ pub struct Env<'a> {
     pub ctx: egui::Context,
     pub library: Vec<LibItem>,
     pub actions: Vec<Action>,
+    /// How opaque the header is, 0 (art shows through) to 1; full-bleed pages set it from
+    /// their scroll position.
+    pub header_solid: f32,
 }
 
 impl Env<'_> {
@@ -257,6 +262,7 @@ impl eframe::App for DesktopApp {
             rt: self.rt.handle().clone(),
             ctx: ui.ctx().clone(),
             actions: Vec::new(),
+            header_solid: 1.0,
         };
         if self.page.is_none() {
             self.page = Some(Page::Board(Board::new(&env)));
@@ -295,10 +301,10 @@ impl eframe::App for DesktopApp {
         }
 
         self.shortcuts(ui, &mut env);
-        self.nav(ui, &mut env);
-        self.top_bar(ui, &mut env);
-        let detail = matches!(self.page, Some(Page::Detail(_)));
-        let margin = if detail { Margin::ZERO } else { Margin { left: 28, right: 12, top: 4, bottom: 0 } };
+        // Home and the detail page draw their art up to the window top, under the header.
+        let full_bleed = matches!(self.page, Some(Page::Board(_) | Page::Detail(_)));
+        let margin =
+            if full_bleed { Margin::ZERO } else { Margin { left: 24, right: 12, top: HEADER_H as i8 + 6, bottom: 0 } };
         egui::CentralPanel::no_frame().frame(Frame::new().fill(BG).inner_margin(margin)).show(ui, |ui| {
             match self.page.as_mut().unwrap() {
                 Page::Board(p) => p.ui(ui, &mut env),
@@ -309,6 +315,7 @@ impl eframe::App for DesktopApp {
                 Page::Addons(p) => p.ui(ui, &mut env),
             }
         });
+        self.header(ui, &mut env);
         self.help_ui(ui);
 
         let actions = std::mem::take(&mut env.actions);
@@ -381,7 +388,9 @@ impl DesktopApp {
         }
     }
 
-    fn nav(&mut self, ui: &mut Ui, env: &mut Env) {
+    /// The one header bar: back, logo and the section tabs on the left, search and help on the
+    /// right. Drawn above the page so full-bleed art can show through it.
+    fn header(&mut self, ui: &mut Ui, env: &mut Env) {
         let current = match &self.page {
             Some(Page::Board(_)) => 0,
             Some(Page::Discover(_)) => 1,
@@ -389,57 +398,59 @@ impl DesktopApp {
             Some(Page::Addons(_)) => 3,
             _ => usize::MAX,
         };
-        Panel::left("nav")
-            .resizable(false)
-            .show_separator_line(false)
-            .exact_size(84.0)
-            .frame(Frame::new().fill(PANEL).inner_margin(Margin::symmetric(10, 18)))
-            .show(ui, |ui| {
-                ui.vertical_centered(|ui| {
-                    if logo(ui, 42.0).on_hover_cursor(CursorIcon::PointingHand).clicked() && current != 0 {
-                        env.go(Route::Board);
+        let screen = ui.ctx().content_rect();
+        let rect = Rect::from_min_size(screen.min, vec2(screen.width(), HEADER_H));
+        let solid = ui.ctx().animate_value_with_time(Id::new("header-solid"), env.header_solid, 0.15);
+        egui::Area::new(Id::new("header")).fixed_pos(rect.min).constrain(false).show(ui.ctx(), |ui| {
+            // Covers the whole strip so nothing under it takes clicks.
+            ui.allocate_rect(rect, Sense::hover());
+            let p = ui.painter();
+            if solid < 1.0 {
+                gradient_v(p, rect.with_max_y(rect.bottom() + 40.0), BG.gamma_multiply(0.7), Color32::TRANSPARENT);
+            }
+            p.rect_filled(rect, 0, BG.gamma_multiply(solid));
+            let inner = rect.shrink2(vec2(20.0, 0.0));
+            ui.scope_builder(UiBuilder::new().max_rect(inner).layout(Layout::left_to_right(Align::Center)), |ui| {
+                ui.add_enabled_ui(!self.history.is_empty(), |ui| {
+                    if icon_button_with(ui, Icon::ChevronLeft, 34.0, "Back (⌘[)", PANEL2).clicked() {
+                        env.actions.push(Action::Back);
                     }
-                    ui.add_space(22.0);
-                    let items =
-                        [(Icon::Home, "Home"), (Icon::Compass, "Discover"), (Icon::Bookmark, "Library"), (Icon::Addons, "Addons")];
-                    for (i, (icon, name)) in items.into_iter().enumerate() {
-                        if nav_item(ui, icon, name, i == current).clicked() && i != current {
-                            env.go(match i {
-                                0 => Route::Board,
-                                1 => Route::Discover(None),
-                                2 => Route::Library,
-                                _ => Route::Addons,
-                            });
-                        }
-                        ui.add_space(4.0);
-                    }
-                    ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
-                        if icon_button(ui, Icon::Help, 36.0, "Keyboard shortcuts (?)").clicked() {
-                            self.help = !self.help;
-                        }
-                    });
                 });
-            });
-    }
+                ui.add_space(4.0);
+                if logo(ui, 30.0).on_hover_text("Home").on_hover_cursor(CursorIcon::PointingHand).clicked() && current != 0 {
+                    env.go(Route::Board);
+                }
+                ui.add_space(10.0);
+                // Icon-only tabs leave the search box room on narrow windows.
+                let compact = ui.available_width() < 900.0;
+                let items =
+                    [(Icon::Home, "Home"), (Icon::Compass, "Discover"), (Icon::Bookmark, "Library"), (Icon::Addons, "Addons")];
+                for (i, (icon, name)) in items.into_iter().enumerate() {
+                    if nav_tab(ui, icon, name, i == current, compact).clicked() && i != current {
+                        env.go(match i {
+                            0 => Route::Board,
+                            1 => Route::Discover(None),
+                            2 => Route::Library,
+                            _ => Route::Addons,
+                        });
+                    }
+                }
 
-    fn top_bar(&mut self, ui: &mut Ui, env: &mut Env) {
-        Panel::top("top")
-            .show_separator_line(false)
-            .frame(Frame::new().fill(BG).inner_margin(Margin { left: 24, right: 24, top: 14, bottom: 10 }))
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.add_enabled_ui(!self.history.is_empty(), |ui| {
-                        if icon_button_with(ui, Icon::ChevronLeft, 38.0, "Back (⌘[)", PANEL2).clicked() {
-                            env.actions.push(Action::Back);
-                        }
-                    });
-                    ui.add_space(6.0);
-                    let width = (ui.available_width() - 40.0).clamp(240.0, 560.0);
-                    if let Some(q) = search_box(ui, &mut self.search, &mut self.search_edited, width) {
-                        env.go(Route::Search(q));
-                    }
-                });
+                // Search box (plus its frame) and the help button, pushed to the right edge.
+                let help_w = 34.0;
+                let frame_w = 20.0;
+                let gap = ui.spacing().item_spacing.x;
+                let free = ui.available_width() - help_w - frame_w - 3.0 * gap;
+                let width = free.clamp(180.0, 420.0);
+                ui.add_space((free - width).max(0.0));
+                if let Some(q) = search_box(ui, &mut self.search, &mut self.search_edited, width) {
+                    env.go(Route::Search(q));
+                }
+                if icon_button(ui, Icon::Help, help_w, "Keyboard shortcuts (?)").clicked() {
+                    self.help = !self.help;
+                }
             });
+        });
     }
 
     fn help_ui(&mut self, ui: &Ui) {
@@ -502,21 +513,28 @@ impl DesktopApp {
     }
 }
 
-fn nav_item(ui: &mut Ui, icon: Icon, name: &str, active: bool) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(vec2(64.0, 58.0), Sense::click());
+/// A section tab of the header: icon and label in a pill, icon-only (with a tooltip) when compact.
+fn nav_tab(ui: &mut Ui, icon: Icon, name: &str, active: bool, compact: bool) -> egui::Response {
+    let font = semibold(14.0);
+    let label = ui.painter().layout_no_wrap(name.to_string(), font.clone(), Color32::PLACEHOLDER);
+    let w = if compact { 40.0 } else { 14.0 + 18.0 + 8.0 + label.size().x + 16.0 };
+    let (rect, resp) = ui.allocate_exact_size(vec2(w, 36.0), Sense::click());
     let t = ui.ctx().animate_bool_with_time(resp.id, resp.hovered() || active, 0.15);
     let p = ui.painter();
     if active {
-        p.rect_filled(rect, 12, ACCENT.gamma_multiply(0.22));
-        p.rect_filled(Rect::from_center_size(pos2(rect.left() - 10.0, rect.center().y), vec2(4.0, 24.0)), 2, ACCENT_HI);
+        p.rect_filled(rect, 18, ACCENT.gamma_multiply(0.22));
     } else if t > 0.0 {
-        p.rect_filled(rect, 12, Color32::from_white_alpha((12.0 * t) as u8));
+        p.rect_filled(rect, 18, Color32::from_white_alpha((12.0 * t) as u8));
     }
     let color = if active { ACCENT2 } else { MUTED.lerp_to_gamma(TEXT, t) };
-    paint_icon(p, Rect::from_center_size(rect.center() - vec2(0.0, 9.0), vec2(22.0, 22.0)), icon, color);
-    let text_color = if active { TEXT } else { color };
-    p.text(rect.center() + vec2(0.0, 15.0), Align2::CENTER_CENTER, name, semibold(11.0), text_color);
-    resp.on_hover_cursor(CursorIcon::PointingHand)
+    let icon_center = if compact { rect.center() } else { pos2(rect.left() + 14.0 + 9.0, rect.center().y) };
+    paint_icon(p, Rect::from_center_size(icon_center, vec2(18.0, 18.0)), icon, color);
+    if !compact {
+        let text_color = if active { TEXT } else { color };
+        p.text(pos2(rect.left() + 40.0, rect.center().y), Align2::LEFT_CENTER, name, font, text_color);
+    }
+    let resp = resp.on_hover_cursor(CursorIcon::PointingHand);
+    if compact { resp.on_hover_text(name) } else { resp }
 }
 
 /// The search field; returns a query once typing pauses or Enter is pressed.

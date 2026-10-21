@@ -13,7 +13,7 @@ use crate::kit::*;
 use crate::model::{Meta, Stream, StreamInfo, Tier, Video, parse_streams};
 use crate::pages::kind_name;
 use crate::task::Task;
-use crate::{Action, Env, PlayReq};
+use crate::{Action, Env, HEADER_H, PlayReq};
 
 struct StreamList {
     video: Option<Video>,
@@ -97,7 +97,7 @@ impl Detail {
             Some(Ok(m)) => m.clone(),
             Some(Err(e)) => {
                 let e = e.clone();
-                ui.add_space(40.0);
+                ui.add_space(HEADER_H + 40.0);
                 if error_state(ui, &e) {
                     self.meta = load_meta(env, &self.kind, &self.id);
                 }
@@ -139,20 +139,21 @@ impl Detail {
                     .stroke(Stroke::new(1.0, Color32::from_white_alpha(16)))
                     .corner_radius(16)
                     .inner_margin(16)
-                    .outer_margin(Margin { left: 0, right: 16, top: 4, bottom: 16 }),
+                    .outer_margin(Margin { left: 0, right: 16, top: HEADER_H as i8 + 6, bottom: 16 }),
             )
             .show(ui, |ui| self.side_ui(ui, env, &meta, lib.as_ref()));
 
-        ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+        let out = ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             Frame::new().inner_margin(Margin { left: 40, right: 32, top: 0, bottom: 32 }).show(ui, |ui| {
                 ui.set_max_width(ui.available_width().min(720.0));
                 self.info_ui(ui, env, &meta, lib.as_ref(), full.height());
             });
         });
+        env.header_solid = ((out.state.offset.y - 60.0) / 120.0).clamp(0.0, 1.0);
     }
 
     fn info_ui(&mut self, ui: &mut Ui, env: &mut Env, meta: &Meta, lib: Option<&LibItem>, height: f32) {
-        ui.add_space((height * 0.22).clamp(60.0, 220.0));
+        ui.add_space(HEADER_H + (height * 0.2).clamp(40.0, 200.0));
         match meta.logo.as_deref().filter(|l| !l.is_empty()) {
             Some(l) => {
                 ui.add(Image::new(l).max_height(120.0).max_width(420.0).fit_to_original_size(1.0)).on_hover_text(&meta.name);
@@ -438,7 +439,7 @@ fn load_meta(env: &Env, kind: &str, id: &str) -> Task<Meta> {
 }
 
 fn loading_ui(ui: &mut Ui) {
-    let full = ui.max_rect();
+    let full = ui.max_rect().with_min_y(ui.max_rect().top() + HEADER_H);
     skeleton(ui, full.with_max_y(full.top() + full.height() * 0.55).shrink(16.0), 16);
     let left = full.left() + 40.0;
     for (i, w) in [380.0, 260.0, 520.0].into_iter().enumerate() {
