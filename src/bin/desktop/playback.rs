@@ -22,6 +22,8 @@ const CONTROLS_TIMEOUT: Duration = Duration::from_millis(2500);
 const SAVE_EVERY: Duration = Duration::from_secs(10);
 /// "Up next" shows this long before the end.
 const UP_NEXT: f64 = 90.0;
+/// The next episode's countdown covers the last seconds; it starts when the episode ends.
+const AUTO_NEXT: f64 = 10.0;
 
 pub enum Exit {
     Stay,
@@ -309,7 +311,7 @@ impl PlayerView {
         // Input on the video area; the controls drawn later sit on top of it.
         let area = ui.interact(rect, ui.id().with("video_area"), Sense::click());
         let fullscreen = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
-        if ctx.input(|i| i.pointer.delta() != egui::Vec2::ZERO || i.pointer.any_down()) {
+        if ctx.input(|i| i.pointer.delta() != egui::Vec2::ZERO || i.pointer.any_down() || i.is_scrolling()) {
             self.active = Instant::now();
         }
         if self.video.is_some() {
@@ -367,7 +369,8 @@ impl PlayerView {
 
         let idle = self.active.elapsed();
         let paused = self.video.as_ref().is_none_or(|v| v.paused() || v.ended());
-        let show = idle < CONTROLS_TIMEOUT || paused || !has_frame;
+        // An open menu (subtitles, audio) keeps them up, or it would vanish with them.
+        let show = idle < CONTROLS_TIMEOUT || paused || !has_frame || Popup::is_any_open(&ctx);
         let fade = ctx.animate_bool_with_time(ui.id().with("controls"), show, 0.2);
 
         // Subtitles, above the controls when they are shown.
@@ -408,7 +411,8 @@ impl PlayerView {
         }
         self.resumed_ui(ui, rect, fade);
 
-        if !matches!(exit, Exit::Stay) && fullscreen {
+        // The next episode stays in full screen.
+        if !matches!(exit, Exit::Stay | Exit::Next(_)) && fullscreen {
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
         }
         exit
@@ -499,7 +503,8 @@ impl PlayerView {
         ui.ctx().request_repaint();
     }
 
-    /// "Up next" card near the end of an episode.
+    /// "Up next" card near the end of an episode; the next one starts by itself when this one
+    /// ends, unless the card was dismissed.
     fn up_next_ui(&mut self, ui: &mut Ui, rect: Rect, fade: f32) -> Option<Exit> {
         let next = self.next.as_ref()?;
         let v = self.video.as_ref()?;
@@ -507,6 +512,11 @@ impl PlayerView {
         if self.next_dismissed || !(v.ended() || v.position() > d - UP_NEXT) {
             return None;
         }
+        if v.ended() {
+            return Some(Exit::Next(next.id.clone()));
+        }
+        let left = d - v.position();
+        let label = if left <= AUTO_NEXT { format!("Next in {} s", left.ceil() as u32) } else { "Next episode".into() };
         let size = vec2(340.0, 96.0);
         let r = Rect::from_min_size(rect.right_bottom() - size - vec2(28.0, 40.0 + 100.0 * fade), size);
         let mut exit = None;
@@ -519,10 +529,10 @@ impl PlayerView {
                     ui.add(egui::Label::new(strong(format!("{} · {}", next.code(), next.label()), 14.0)).truncate());
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
-                        if button_sized(ui, Kind::Primary, Some(Icon::Next), "Next episode", 32.0).on_hover_text("N").clicked() {
+                        if button_sized(ui, Kind::Primary, Some(Icon::Next), &label, 32.0).on_hover_text("N").clicked() {
                             exit = Some(Exit::Next(next.id.clone()));
                         }
-                        if button_sized(ui, Kind::Ghost, None, "Dismiss", 32.0).clicked() {
+                        if button_sized(ui, Kind::Ghost, None, "Dismiss", 32.0).on_hover_text("Don't play it automatically").clicked() {
                             self.next_dismissed = true;
                         }
                     });
@@ -677,18 +687,19 @@ impl PlayerView {
                             Popup::menu(&resp).align(RectAlign::TOP_END).gap(8.0).show(|ui| {
                                 ui.set_min_width(240.0);
                                 ui.label(muted("SUBTITLES", 11.0));
-                                if ui.selectable_label(info.sub.is_none() && online_sub.is_none(), "Off").clicked() {
-                                    sub_choice = Some(None);
-                                }
-                                for t in &info.sub_tracks {
-                                    if ui.selectable_label(info.sub == Some(t.index), &t.label).clicked() {
-                                        sub_choice = Some(Some(t.index));
+                                // One scrolling list, sized to fit above the controls.
+                                let max_h = (ui.ctx().content_rect().height() - 330.0).max(120.0);
+                                egui::ScrollArea::vertical().max_height(max_h).show(ui, |ui| {
+                                    for t in &info.sub_tracks {
+                                        if ui.selectable_label(info.sub == Some(t.index), &t.label).clicked() {
+                                            sub_choice = Some(Some(t.index));
+                                        }
                                     }
-                                }
-                                if !online.is_empty() {
-                                    ui.add_space(4.0);
-                                    ui.label(muted("ONLINE", 11.0));
-                                    egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
+                                    if !online.is_empty() {
+                                        if !info.sub_tracks.is_empty() {
+                                            ui.add_space(4.0);
+                                        }
+                                        ui.label(muted("ONLINE", 11.0));
                                         let mut n = std::collections::HashMap::new();
                                         for (i, t) in online.iter().enumerate() {
                                             let lang = subtitles::lang_name(&t.lang);
@@ -702,9 +713,9 @@ impl PlayerView {
                                                 online_choice = Some(i);
                                             }
                                         }
-                                    });
-                                }
-                                ui.add_space(4.0);
+                                    }
+                                });
+                                ui.separator();
                                 ui.horizontal(|ui| {
                                     ui.label(muted(format!("Delay {:+.2} s", v.sub_delay), 12.0));
                                     if ui.small_button("−").on_hover_text("Earlier (Z)").clicked() {
@@ -714,6 +725,14 @@ impl PlayerView {
                                         delay = 0.25;
                                     }
                                 });
+                                // Last, right above the button: the quickest to reach.
+                                let off = info.sub.is_none() && online_sub.is_none();
+                                let resp = ui.add(
+                                    egui::Button::selectable(off, "Subtitles off").min_size(vec2(ui.available_width(), 30.0)),
+                                );
+                                if resp.clicked() {
+                                    sub_choice = Some(None);
+                                }
                             });
                         }
                         if info.audio_tracks.len() > 1 {
