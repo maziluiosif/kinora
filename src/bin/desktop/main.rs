@@ -2,6 +2,7 @@
 //! streams in the embedded player (`video.rs`); the local HTTP server hands torrent streams to
 //! FFmpeg (or to an external player).
 
+mod awake;
 mod detail;
 mod kit;
 mod model;

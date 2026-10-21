@@ -48,7 +48,8 @@ libswscale-dev libswresample-dev libavdevice-dev libavfilter-dev pkg-config libc
   is always kept. Set `KINORA_CACHE_GB` to change the size. The cache is in
   `~/Library/Caches/kinora/` (macOS) or `~/.cache/kinora/`.
 - **Embedded player** (FFmpeg + cpal) for any codec FFmpeg supports (HEVC, AC3, DTS…), with seeking,
-  audio track and subtitle selection, full screen, resume, and "up next". An external player is still one click away.
+  audio track and subtitle selection, full screen, resume, and "up next". The display stays on
+  while a video plays (macOS), and can sleep again when you pause. An external player is still one click away.
 - **Library** and **Continue watching**, stored in `~/.config/kinora/`.
 
 ### Keyboard shortcuts (desktop)

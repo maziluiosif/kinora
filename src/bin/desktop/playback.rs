@@ -12,6 +12,7 @@ use kinora::library::SubtitlePref;
 use kinora::subtitles::{self, Cue, SubtitleTrack};
 use kinora::{Core, PlayReq as CoreReq, player};
 
+use crate::awake::KeepAwake;
 use crate::kit::*;
 use crate::model::Video;
 use crate::task::Task;
@@ -67,6 +68,8 @@ pub struct PlayerView {
     subs_auto: bool,
     /// The subtitles picked last time for this title.
     sub_pref: Option<SubtitlePref>,
+    /// Keeps the display on while playing (released on pause, end and close).
+    awake: Option<KeepAwake>,
 }
 
 impl PlayerView {
@@ -115,6 +118,7 @@ impl PlayerView {
             online_loading: None,
             subs_auto: false,
             sub_pref,
+            awake: None,
         }
     }
 
@@ -277,6 +281,13 @@ impl PlayerView {
         }
 
         self.update_subs(env);
+        // Buffering counts as playing: the picture is about to move again.
+        let playing = self.video.as_ref().is_some_and(|v| matches!(v.info, Some(Ok(_))) && !v.paused() && !v.ended());
+        if playing && self.awake.is_none() {
+            self.awake = KeepAwake::new("Kinora is playing a video");
+        } else if !playing {
+            self.awake = None;
+        }
 
         // Video frame.
         let mut has_frame = false;
