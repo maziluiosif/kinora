@@ -51,6 +51,7 @@ pub fn router(core: Arc<Core>) -> Router {
         .route("/api/search", get(search))
         .route("/api/meta/{kind}/{id}", get(meta))
         .route("/api/streams/{kind}/{id}", get(streams))
+        .route("/api/subtitles/{kind}/{id}", get(subtitles))
         .route("/api/library", get(library).post(update_library))
         .route("/api/play", post(play))
         .route("/api/stop", post(stop))
@@ -145,6 +146,19 @@ async fn meta(State(s): S, Path((kind, id)): Path<(String, String)>) -> ApiResul
 
 async fn streams(State(s): S, Path((kind, id)): Path<(String, String)>) -> Json<Value> {
     Json(json!({ "streams": s.streams(&kind, &id).await }))
+}
+
+#[derive(Deserialize)]
+struct SubtitlesQuery {
+    filename: Option<String>,
+}
+
+async fn subtitles(
+    State(s): S,
+    Path((kind, id)): Path<(String, String)>,
+    Query(q): Query<SubtitlesQuery>,
+) -> Json<Value> {
+    Json(json!({ "subtitles": s.subtitles(&kind, &id, q.filename.as_deref()).await }))
 }
 
 async fn library(State(s): S) -> Json<Value> {

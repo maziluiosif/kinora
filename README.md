@@ -28,12 +28,18 @@ libswscale-dev libswresample-dev libavdevice-dev libavfilter-dev pkg-config libc
   any other addon by its `manifest.json` URL from the Addons page.
 - **Board** with every addon catalog, **Discover** with infinite scroll, and **Search** across all addons.
 - **Details**: a backdrop, season tabs, watched and upcoming episodes, one-click Play/Continue, and
-  a stream list with quality filters, seeders, size and source.
+  a stream list sorted by seeders, with quality filters, size and source.
+- **Autoplay**: picking an episode (or Play) starts the best source right away. The order is 1080p
+  first, then 720p, 4K and SD, and the most seeders within each quality. If a source fails, use
+  **Try the next source**, or close the player and pick one from the list.
+- **Subtitles**: Romanian is picked automatically, from the file if it has a Romanian track and
+  otherwise from [OpenSubtitles](https://www.opensubtitles.org/) (or any installed subtitles addon).
+  All languages are in the player's subtitles menu. Z / X shift the timing, and legacy
+  Windows-1250 files are decoded correctly.
 - **Torrent streaming** with [librqbit](https://github.com/ikatson/rqbit). It supports HTTP range
   requests and seeking, downloads only the selected file, and deletes the previous torrent when you switch.
 - **Embedded player** (FFmpeg + cpal) for any codec FFmpeg supports (HEVC, AC3, DTS…), with seeking,
-  audio track and subtitle selection (Romanian or forced subtitles are picked automatically), full
-  screen, resume, and "up next". An external player is still one click away.
+  audio track and subtitle selection, full screen, resume, and "up next". An external player is still one click away.
 - **Library** and **Continue watching**, stored in `~/.config/kinora/`.
 
 ### Keyboard shortcuts (desktop)
@@ -47,6 +53,7 @@ libswscale-dev libswresample-dev libavdevice-dev libavfilter-dev pkg-config libc
 | ↑ / ↓ | Volume |
 | F · double-click | Full screen |
 | M | Mute |
+| Z / X | Subtitles earlier / later |
 | N | Next episode |
 | Esc | Leave full screen / close the player |
 | ? | All shortcuts |
@@ -63,6 +70,7 @@ mp4/x264; MKV/HEVC/AC3 need the desktop app or an external player.
 - `src/addons.rs`: manifests, resource matching, catalog/meta/stream requests
 - `src/engine.rs`: torrent engine (magnet → file selection → stream)
 - `src/server.rs`: HTTP API and the `/stream/{torrent}/{file}/{name}` endpoint
+- `src/subtitles.rs`: subtitles from addons, SRT/WebVTT parsing, encoding detection
 - `src/library.rs`, `src/player.rs`: library persistence and external player launch
 - `src/bin/desktop/`: the desktop app (egui), with `main.rs` (shell, navigation), `pages.rs`,
   `detail.rs`, `playback.rs` (player UI), `kit.rs` (theme, icons, widgets) and `video.rs` (FFmpeg player)

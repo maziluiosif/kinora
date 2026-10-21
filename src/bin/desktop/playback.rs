@@ -8,6 +8,7 @@ use eframe::egui::{
     vec2,
 };
 use serde_json::Value;
+use kinora::subtitles::{self, Cue, SubtitleTrack};
 use kinora::{Core, PlayReq as CoreReq, player};
 
 use crate::kit::*;
@@ -23,6 +24,8 @@ const UP_NEXT: f64 = 90.0;
 pub enum Exit {
     Stay,
     Close,
+    /// Close and start the next best source (this one failed).
+    Retry,
     /// Close and open the streams of this video.
     Next(String),
 }
@@ -54,6 +57,13 @@ pub struct PlayerView {
     osd: Option<(String, Instant)>,
     /// Play/pause pulse in the middle of the screen.
     flash: Option<(bool, Instant)>,
+    /// Subtitles from addons (OpenSubtitles by default), Romanian first.
+    online_subs: Task<Vec<SubtitleTrack>>,
+    /// The online subtitle shown, and one being downloaded.
+    online_sub: Option<usize>,
+    online_loading: Option<(usize, Task<Vec<Cue>>)>,
+    /// Whether a Romanian online subtitle was considered once the stream opened.
+    subs_auto: bool,
 }
 
 impl PlayerView {
@@ -69,6 +79,13 @@ impl PlayerView {
             external: false,
         };
         let started = env.spawn(move |core| async move { core.play(core_req).await });
+        let (kind, vid, filename) = (req.lib.kind.clone(), req.lib.video.clone(), s.behavior_hints.filename.clone());
+        let online_subs = env.spawn(move |core| async move {
+            Ok(match vid {
+                Some(vid) => core.subtitles(&kind, &vid, filename.as_deref()).await,
+                None => Vec::new(),
+            })
+        });
         PlayerView {
             title: req.title,
             torrent: s.info_hash.is_some(),
@@ -89,6 +106,55 @@ impl PlayerView {
             saved: Instant::now(),
             osd: None,
             flash: None,
+            online_subs,
+            online_sub: None,
+            online_loading: None,
+            subs_auto: false,
+        }
+    }
+
+    /// Picks a Romanian online subtitle when the file has no Romanian track, and applies
+    /// downloads as they finish.
+    fn update_subs(&mut self, env: &Env) {
+        let Some(v) = &mut self.video else { return };
+        let Some(Ok(info)) = &v.info else { return };
+        if !self.subs_auto
+            && let Some(Ok(tracks)) = self.online_subs.get()
+        {
+            self.subs_auto = true;
+            if !info.sub_romanian
+                && let Some(i) = tracks.iter().position(|t| subtitles::is_romanian(&t.lang))
+            {
+                let url = tracks[i].url.clone();
+                self.online_loading = Some((i, env.spawn(move |core| async move { core.subtitle_cues(&url).await })));
+            }
+        }
+        let done = match &mut self.online_loading {
+            Some((i, task)) => task.get().map(|r| (*i, r.clone())),
+            None => None,
+        };
+        if let Some((i, res)) = done {
+            self.online_loading = None;
+            match res {
+                Ok(cues) => {
+                    v.set_external_subs(cues);
+                    self.online_sub = Some(i);
+                    let lang = match self.online_subs.get() {
+                        Some(Ok(t)) => t.get(i).map(|t| subtitles::lang_name(&t.lang)).unwrap_or_default(),
+                        _ => String::new(),
+                    };
+                    self.osd(format!("Subtitles: {lang}"));
+                }
+                Err(e) => self.osd(format!("Subtitles failed: {e}")),
+            }
+        }
+    }
+
+    fn shift_subs(&mut self, delta: f64) {
+        if let Some(v) = &mut self.video {
+            v.sub_delay = ((v.sub_delay + delta) * 100.0).round() / 100.0;
+            let d = v.sub_delay;
+            self.osd(format!("Subtitle delay {}{d:.2} s", if d > 0.0 { "+" } else { "" }));
         }
     }
 
@@ -175,6 +241,8 @@ impl PlayerView {
             self.saved = Instant::now();
         }
 
+        self.update_subs(env);
+
         // Video frame.
         let mut has_frame = false;
         if let Some(v) = &mut self.video
@@ -207,9 +275,23 @@ impl PlayerView {
             }
             let keys = ctx.input(|i| {
                 let p = |k| i.key_pressed(k);
-                [p(Key::Space), p(Key::ArrowLeft), p(Key::ArrowRight), p(Key::ArrowUp), p(Key::ArrowDown), p(Key::F), p(Key::M), p(Key::N)]
+                [
+                    p(Key::Space),
+                    p(Key::ArrowLeft),
+                    p(Key::ArrowRight),
+                    p(Key::ArrowUp),
+                    p(Key::ArrowDown),
+                    p(Key::F),
+                    p(Key::M),
+                    p(Key::N),
+                    p(Key::Z),
+                    p(Key::X),
+                ]
             });
-            let [space, left, right, up, down, f, m, n] = keys;
+            let [space, left, right, up, down, f, m, n, z, x] = keys;
+            if z || x {
+                self.shift_subs(if z { -0.25 } else { 0.25 });
+            }
             if space {
                 self.toggle_pause();
             }
@@ -262,7 +344,7 @@ impl PlayerView {
                     exit = Exit::Close;
                 }
                 if self.video.is_some() {
-                    self.bottom_bar(ui, rect, fullscreen);
+                    self.bottom_bar(ui, env, rect, fullscreen);
                 }
             });
             if !paused {
@@ -297,9 +379,12 @@ impl PlayerView {
                 ui.label(RichText::new(err).size(13.0).color(MUTED));
                 ui.add_space(16.0);
                 ui.horizontal(|ui| {
-                    let w = 300.0;
+                    let w = 460.0;
                     ui.add_space((ui.available_width() - w).max(0.0) / 2.0);
-                    if button(ui, Kind::Primary, Some(Icon::ChevronLeft), "Choose another stream").clicked() {
+                    if button(ui, Kind::Primary, Some(Icon::Next), "Try the next source").clicked() {
+                        exit = Exit::Retry;
+                    }
+                    if button(ui, Kind::Secondary, Some(Icon::ChevronLeft), "Choose manually").clicked() {
                         exit = Exit::Close;
                     }
                     if let Some(url) = &self.url
@@ -471,12 +556,19 @@ impl PlayerView {
         back
     }
 
-    fn bottom_bar(&mut self, ui: &mut Ui, rect: Rect, fullscreen: bool) {
+    fn bottom_bar(&mut self, ui: &mut Ui, env: &Env, rect: Rect, fullscreen: bool) {
         let bar = rect.with_min_y(rect.bottom() - 170.0);
         gradient_v(ui.painter(), bar, Color32::TRANSPARENT, Color32::from_black_alpha(215));
         let inner = Rect::from_min_max(pos2(rect.left() + 24.0, rect.bottom() - 96.0), pos2(rect.right() - 24.0, rect.bottom() - 14.0));
         let mut audio_choice = None;
         let mut sub_choice = None;
+        let mut online_choice = None;
+        let mut delay = 0.0;
+        let online: Vec<SubtitleTrack> = match self.online_subs.get() {
+            Some(Ok(t)) => t.clone(),
+            _ => Vec::new(),
+        };
+        let (online_sub, online_loading) = (self.online_sub, self.online_loading.as_ref().map(|(i, _)| *i));
         let (mut mute, mut external, mut pause, mut seek_by) = (false, false, false, 0.0);
         let Some(v) = &mut self.video else { return };
         ui.scope_builder(UiBuilder::new().max_rect(inner), |ui| {
@@ -527,9 +619,9 @@ impl PlayerView {
                     }
                     external = icon_button(ui, Icon::External, 40.0, "Open in an external player").clicked();
                     if let Some(Ok(info)) = &v.info {
-                        if !info.sub_tracks.is_empty() {
-                            let resp = icon_button(ui, Icon::Subtitles, 40.0, "Subtitles");
-                            if info.sub.is_some() {
+                        if !info.sub_tracks.is_empty() || !online.is_empty() {
+                            let resp = icon_button(ui, Icon::Subtitles, 40.0, "Subtitles (Z / X: delay)");
+                            if info.sub.is_some() || online_sub.is_some() {
                                 ui.painter().rect_filled(
                                     Rect::from_center_size(resp.rect.center_bottom() - vec2(0.0, 4.0), vec2(14.0, 2.5)),
                                     1,
@@ -537,9 +629,9 @@ impl PlayerView {
                                 );
                             }
                             Popup::menu(&resp).align(RectAlign::TOP_END).gap(8.0).show(|ui| {
-                                ui.set_min_width(200.0);
+                                ui.set_min_width(240.0);
                                 ui.label(muted("SUBTITLES", 11.0));
-                                if ui.selectable_label(info.sub.is_none(), "Off").clicked() {
+                                if ui.selectable_label(info.sub.is_none() && online_sub.is_none(), "Off").clicked() {
                                     sub_choice = Some(None);
                                 }
                                 for t in &info.sub_tracks {
@@ -547,6 +639,35 @@ impl PlayerView {
                                         sub_choice = Some(Some(t.index));
                                     }
                                 }
+                                if !online.is_empty() {
+                                    ui.add_space(4.0);
+                                    ui.label(muted("ONLINE", 11.0));
+                                    egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
+                                        let mut n = std::collections::HashMap::new();
+                                        for (i, t) in online.iter().enumerate() {
+                                            let lang = subtitles::lang_name(&t.lang);
+                                            let k = n.entry(lang.clone()).or_insert(0);
+                                            *k += 1;
+                                            let mut label = format!("{lang} {k}");
+                                            if online_loading == Some(i) {
+                                                label.push_str("  …");
+                                            }
+                                            if ui.selectable_label(online_sub == Some(i), label).on_hover_text(&t.addon).clicked() {
+                                                online_choice = Some(i);
+                                            }
+                                        }
+                                    });
+                                }
+                                ui.add_space(4.0);
+                                ui.horizontal(|ui| {
+                                    ui.label(muted(format!("Delay {:+.2} s", v.sub_delay), 12.0));
+                                    if ui.small_button("−").on_hover_text("Earlier (Z)").clicked() {
+                                        delay = -0.25;
+                                    }
+                                    if ui.small_button("+").on_hover_text("Later (X)").clicked() {
+                                        delay = 0.25;
+                                    }
+                                });
                             });
                         }
                         if info.audio_tracks.len() > 1 {
@@ -570,6 +691,14 @@ impl PlayerView {
         }
         if let Some(i) = sub_choice {
             v.set_sub_track(i);
+            self.online_sub = None;
+            self.online_loading = None;
+        }
+        if let Some(i) = online_choice
+            && let Some(t) = online.get(i)
+        {
+            let (url, core) = (t.url.clone(), env.core.clone());
+            self.online_loading = Some((i, Task::spawn(&env.rt, &env.ctx, async move { core.subtitle_cues(&url).await })));
         }
         if external && let Some(url) = &self.url {
             v.set_paused(true);
@@ -585,6 +714,9 @@ impl PlayerView {
         }
         if mute {
             self.toggle_mute();
+        }
+        if delay != 0.0 {
+            self.shift_subs(delay);
         }
     }
 }

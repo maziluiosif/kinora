@@ -22,6 +22,7 @@ use ff::format::Sample;
 use ff::format::sample::Type as SampleType;
 use ff::media::Type as Media;
 use ff::software::{resampling, scaling};
+use kinora::subtitles::Cue;
 
 /// Frames are scaled down to fit this box before upload.
 const MAX_W: u32 = 1920;
@@ -47,6 +48,8 @@ pub struct Info {
     pub sub_tracks: Vec<Track>,
     pub audio: Option<usize>,
     pub sub: Option<usize>,
+    /// The selected embedded track is Romanian (not just forced).
+    pub sub_romanian: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -205,6 +208,10 @@ pub struct Player {
     texture: Option<TextureHandle>,
     /// Whether a frame of the current epoch is on screen.
     has_frame: bool,
+    /// Cues of a downloaded subtitle file; shown instead of the embedded track.
+    external: Option<Vec<Cue>>,
+    /// Seconds the subtitles are shown later (negative: earlier).
+    pub sub_delay: f64,
     _audio_out: Option<cpal::Stream>,
 }
 
@@ -256,6 +263,8 @@ impl Player {
             info: None,
             texture: None,
             has_frame: false,
+            external: None,
+            sub_delay: 0.0,
             _audio_out: audio_out.map(|(s, ..)| s),
         }
     }
@@ -322,17 +331,40 @@ impl Player {
     }
 
     pub fn set_sub_track(&mut self, index: Option<usize>) {
+        self.external = None;
         if let Some(Ok(info)) = &mut self.info {
             info.sub = index;
         }
         let _ = self.cmd.send(Cmd::Sub(index));
-        self.seek(self.position());
+        if index.is_some() {
+            // Re-read from here so the cues around the playhead get decoded.
+            self.seek(self.position());
+        }
+    }
+
+    /// Shows `cues` from a subtitle file instead of the embedded track.
+    pub fn set_external_subs(&mut self, cues: Vec<Cue>) {
+        if let Some(Ok(info)) = &mut self.info
+            && info.sub.take().is_some()
+        {
+            let _ = self.cmd.send(Cmd::Sub(None));
+        }
+        self.external = Some(cues);
     }
 
     pub fn subtitle(&self) -> Option<String> {
-        let t = self.position();
-        let subs = self.shared.subs.lock().unwrap();
-        let lines: Vec<&str> = subs.iter().filter(|s| s.start <= t && t < s.end).map(|s| s.text.as_str()).collect();
+        let t = self.position() - self.sub_delay;
+        let lines: Vec<String> = match &self.external {
+            Some(cues) => {
+                // Cues are sorted by start; overlapping ones are rare and short.
+                let end = cues.partition_point(|c| c.start <= t);
+                cues[..end].iter().rev().take(4).filter(|c| t < c.end).map(|c| c.text.clone()).collect::<Vec<_>>().into_iter().rev().collect()
+            }
+            None => {
+                let subs = self.shared.subs.lock().unwrap();
+                subs.iter().filter(|s| s.start <= t && t < s.end).map(|s| s.text.clone()).collect()
+            }
+        };
         (!lines.is_empty()).then(|| lines.join("\n"))
     }
 
@@ -471,22 +503,30 @@ fn demux(
         sub_tracks: Vec::new(),
         audio,
         sub: None,
+        sub_romanian: false,
     };
+    let mut forced = None;
     for s in input.streams() {
         let params = s.parameters();
         match params.medium() {
             Media::Audio => info.audio_tracks.push(Track { index: s.index(), label: track_label(&s, info.audio_tracks.len() + 1) }),
             Media::Subtitle if is_text_sub(params.id()) => {
                 let lang = s.metadata().get("language").unwrap_or_default().to_lowercase();
-                let preferred = ["rum", "ron", "rom", "ro"].contains(&lang.as_str())
-                    || s.disposition().contains(ff::format::stream::Disposition::FORCED);
-                if preferred && info.sub.is_none() {
+                // Romanian first, otherwise a forced track (foreign dialogue only).
+                if ["rum", "ron", "rom", "ro"].contains(&lang.as_str()) && !info.sub_romanian {
                     info.sub = Some(s.index());
+                    info.sub_romanian = true;
+                } else if s.disposition().contains(ff::format::stream::Disposition::FORCED) && forced.is_none() {
+                    forced = Some(s.index());
                 }
                 info.sub_tracks.push(Track { index: s.index(), label: track_label(&s, info.sub_tracks.len() + 1) });
             }
             _ => {}
         }
+    }
+
+    if info.sub.is_none() {
+        info.sub = forced;
     }
 
     let (vtx, vrx) = mpsc::channel::<Pkt<()>>();

@@ -268,13 +268,26 @@ impl eframe::App for DesktopApp {
             if !matches!(exit, Exit::Stay) {
                 p.save_progress(&core);
                 self.player = None;
-                let core = core.clone();
-                self.rt.spawn(async move { core.engine.stop().await });
-                if let Exit::Next(video) = exit
-                    && let Some(Page::Detail(d)) = &mut self.page
-                {
-                    d.open_episode(&env, &video);
+                // The next source replaces the torrent itself; stopping here could race with it.
+                if !matches!(exit, Exit::Retry) {
+                    let core = core.clone();
+                    self.rt.spawn(async move { core.engine.stop().await });
                 }
+                match (exit, &mut self.page) {
+                    (Exit::Next(video), Some(Page::Detail(d))) => d.open_episode(&env, &video),
+                    (Exit::Retry, Some(Page::Detail(d))) => {
+                        if !d.play_next_source(&mut env) {
+                            env.toast("No other source left, pick one manually");
+                        }
+                    }
+                    _ => {}
+                }
+                for a in std::mem::take(&mut env.actions) {
+                    self.apply(&env, a);
+                }
+            }
+            if self.player.is_none() {
+                self.toasts_ui(ui);
             }
             return;
         }
@@ -444,6 +457,7 @@ impl DesktopApp {
                 ("↑  ↓", "Volume"),
                 ("F  ·  double-click", "Full screen"),
                 ("M", "Mute"),
+                ("Z  ·  X", "Subtitles earlier / later"),
                 ("N", "Next episode"),
                 ("Esc", "Leave full screen / close player"),
             ];

@@ -5,6 +5,7 @@ pub mod engine;
 pub mod library;
 pub mod player;
 pub mod server;
+pub mod subtitles;
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -17,11 +18,14 @@ use tokio::task::JoinSet;
 use addons::Addons;
 use engine::Engine;
 use library::Library;
+use subtitles::{Cue, SubtitleTrack};
 
 pub struct Core {
     pub addons: Addons,
     pub engine: Engine,
     pub library: Library,
+    /// OpenSubtitles, used when no installed addon provides subtitles.
+    fallback_subs: tokio::sync::OnceCell<Option<addons::Addon>>,
     /// Port of the local HTTP server that serves `/stream/...`.
     pub(crate) port: u16,
 }
@@ -84,6 +88,7 @@ impl Core {
             addons: Addons::load(http, config_dir.join("addons.json")).await,
             engine: Engine::new(cache_dir).await?,
             library: Library::load(config_dir.join("library.json")),
+            fallback_subs: tokio::sync::OnceCell::new(),
             port,
         })
     }
@@ -176,6 +181,60 @@ impl Core {
             }
         }
         out
+    }
+
+    /// Subtitles for a video from every addon that has them, Romanian first. `filename` (the
+    /// release name) helps addons match subtitles to the exact release.
+    pub async fn subtitles(&self, kind: &str, id: &str, filename: Option<&str>) -> Vec<SubtitleTrack> {
+        let mut addons: Vec<_> =
+            self.addons.list().await.into_iter().filter(|a| a.manifest.supports("subtitles", kind, id)).collect();
+        if addons.is_empty() {
+            let fallback = self
+                .fallback_subs
+                .get_or_init(|| async {
+                    addons::Addon::fetch(&self.addons.http, subtitles::OPENSUBTITLES)
+                        .await
+                        .inspect_err(|e| tracing::warn!("OpenSubtitles unavailable: {e:#}"))
+                        .ok()
+                })
+                .await;
+            addons.extend(fallback.clone().filter(|a| a.manifest.supports("subtitles", kind, id)));
+        }
+        let extra: Vec<(String, String)> = filename.map(|f| ("filename".to_string(), f.to_string())).into_iter().collect();
+        let mut set = JoinSet::new();
+        for (order, a) in addons.into_iter().enumerate() {
+            let (http, kind, id, extra) = (self.addons.http.clone(), kind.to_string(), id.to_string(), extra.clone());
+            set.spawn(async move { (order, a.manifest.name.clone(), a.get(&http, "subtitles", &kind, &id, &extra).await) });
+        }
+        let mut results = Vec::new();
+        while let Some(Ok((order, addon, res))) = set.join_next().await {
+            match res {
+                Ok(v) => results.push((order, addon, v)),
+                Err(e) => tracing::warn!("subtitles failed in {addon}: {e:#}"),
+            }
+        }
+        results.sort_by_key(|(o, _, _)| *o);
+        let mut out: Vec<SubtitleTrack> = Vec::new();
+        for (_, addon, v) in results {
+            for t in v["subtitles"].as_array().cloned().unwrap_or_default() {
+                if let Ok(mut t) = serde_json::from_value::<SubtitleTrack>(t)
+                    && !out.iter().any(|o| o.url == t.url)
+                {
+                    t.addon = addon.clone();
+                    out.push(t);
+                }
+            }
+        }
+        subtitles::sort_tracks(&mut out);
+        out
+    }
+
+    /// Downloads and parses a subtitle file.
+    pub async fn subtitle_cues(&self, url: &str) -> Result<Vec<Cue>> {
+        let bytes = self.addons.http.get(url).send().await?.error_for_status()?.bytes().await?;
+        let cues = subtitles::parse(&subtitles::decode(&bytes));
+        anyhow::ensure!(!cues.is_empty(), "no subtitles in the file");
+        Ok(cues)
     }
 
     /// Starts a stream (torrent or direct URL); returns its local URL and, for torrents, the engine info.

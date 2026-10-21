@@ -2877,6 +2877,7 @@ dependencies = [
  "eframe",
  "egui",
  "egui_extras",
+ "encoding_rs",
  "ffmpeg-next",
  "image",
  "librqbit",

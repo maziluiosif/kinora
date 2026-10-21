@@ -1,5 +1,6 @@
 //! The details page: artwork and info on the left, episodes or streams on the right.
 
+use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use eframe::egui::{
@@ -21,6 +22,10 @@ struct StreamList {
     filter: String,
     tier: Option<Tier>,
     by_seeders: bool,
+    /// Play the best stream as soon as the list arrives.
+    autoplay: bool,
+    /// Streams already played from this list; "Try another source" skips them.
+    tried: HashSet<String>,
 }
 
 pub struct Detail {
@@ -44,14 +49,34 @@ impl Detail {
         self.kind == "series" || meta.videos.len() > 1
     }
 
-    fn open_streams(&mut self, env: &Env, video: Option<&Video>, video_id: String) {
+    fn open_streams(&mut self, env: &Env, video: Option<&Video>, video_id: String, autoplay: bool) {
         let (kind, vid) = (self.kind.clone(), video_id.clone());
         let streams = env.spawn(move |core| async move { Ok(parse_streams(core.streams(&kind, &vid).await)) });
         if let Some(v) = video {
             self.season = Some(v.season);
         }
-        self.streams =
-            Some(StreamList { video: video.cloned(), video_id, streams, filter: String::new(), tier: None, by_seeders: false });
+        self.streams = Some(StreamList {
+            video: video.cloned(),
+            video_id,
+            streams,
+            filter: String::new(),
+            tier: None,
+            by_seeders: true,
+            autoplay,
+            tried: HashSet::new(),
+        });
+    }
+
+    /// Plays the best stream not tried yet (after one failed). Returns false when none is left.
+    pub fn play_next_source(&mut self, env: &mut Env) -> bool {
+        let Some(Ok(meta)) = self.meta.get().map(|m| m.clone()) else { return false };
+        let Some(list) = &mut self.streams else { return false };
+        let Some(Ok(streams)) = list.streams.get() else { return false };
+        let Some(s) = best_stream(streams, &list.tried).cloned() else { return false };
+        list.tried.insert(s.key());
+        let (video, video_id) = (list.video.clone(), list.video_id.clone());
+        env.actions.push(play_action(&self.kind, &self.id, &meta, s, video.as_ref(), video_id));
+        true
     }
 
     /// Shows the streams of `video_id` (used by the player's "Next episode").
@@ -61,7 +86,7 @@ impl Detail {
             _ => None,
         };
         if let Some(v) = video {
-            self.open_streams(env, Some(&v), v.id.clone());
+            self.open_streams(env, Some(&v), v.id.clone(), true);
         }
     }
 
@@ -89,7 +114,7 @@ impl Detail {
                 self.season = meta.videos.iter().find(|v| Some(v.id.as_str()) == last).map(|v| v.season);
             } else {
                 let vid = meta.behavior_hints.default_video_id.clone().unwrap_or_else(|| self.id.clone());
-                self.open_streams(env, None, vid);
+                self.open_streams(env, None, vid, false);
             }
         }
 
@@ -188,14 +213,17 @@ impl Detail {
     fn play_button(&mut self, ui: &mut Ui, env: &mut Env, meta: &Meta, lib: Option<&LibItem>) {
         if self.is_series(meta) {
             let Some((video, label)) = up_next(meta, lib) else { return };
-            if button(ui, Kind::Primary, Some(Icon::Play), &label).clicked() {
-                self.open_streams(env, Some(&video), video.id.clone());
+            if button(ui, Kind::Primary, Some(Icon::Play), &label)
+                .on_hover_text("Starts the best source right away (1080p with the most seeders)")
+                .clicked()
+            {
+                self.open_streams(env, Some(&video), video.id.clone(), true);
             }
             return;
         }
         let Some(list) = &mut self.streams else { return };
         let best = match list.streams.get() {
-            Some(Ok(s)) => best_stream(s).cloned(),
+            Some(Ok(s)) => best_stream(s, &HashSet::new()).cloned(),
             _ => None,
         };
         let loading = list.streams.get().is_none();
@@ -205,6 +233,7 @@ impl Detail {
             && resp.on_hover_text("Plays the best-seeded 1080p stream (or the closest); pick another one on the right").clicked()
         {
             let video_id = list.video_id.clone();
+            list.tried.insert(s.key());
             env.actions.push(play_action(&self.kind, &self.id, meta, s, None, video_id));
         }
     }
@@ -263,6 +292,12 @@ impl Detail {
                 empty_state(ui, Icon::Search, "No streams found", "None of your addons has a stream for this yet.");
             }
             Some(Ok(streams)) => {
+                if std::mem::take(&mut list.autoplay)
+                    && let Some(s) = best_stream(streams, &list.tried).cloned()
+                {
+                    list.tried.insert(s.key());
+                    env.actions.push(play_action(&self.kind, &self.id, meta, s, video.as_ref(), video_id.clone()));
+                }
                 let infos: Vec<StreamInfo> = streams.iter().map(Stream::info).collect();
                 let mut tiers: Vec<Tier> = infos.iter().map(|i| i.tier).collect();
                 tiers.sort();
@@ -287,7 +322,7 @@ impl Detail {
                             .desired_width(ui.available_width() - 120.0)
                             .margin(Margin::symmetric(10, 7)),
                     );
-                    let label = if list.by_seeders { "Most seeds" } else { "Best match" };
+                    let label = if list.by_seeders { "Most seeds" } else { "Addon order" };
                     if button_sized(ui, Kind::Ghost, None, label, 32.0).on_hover_text("Change the order").clicked() {
                         list.by_seeders = !list.by_seeders;
                     }
@@ -319,6 +354,7 @@ impl Detail {
                     }
                 });
                 if let Some(s) = play {
+                    list.tried.insert(s.key());
                     env.actions.push(play_action(&self.kind, &self.id, meta, s, video.as_ref(), video_id));
                 }
             }
@@ -378,7 +414,7 @@ impl Detail {
             }
         });
         if let Some(v) = picked {
-            self.open_streams(env, Some(&v), v.id.clone());
+            self.open_streams(env, Some(&v), v.id.clone(), true);
         }
     }
 }
@@ -417,21 +453,26 @@ fn backdrop(ui: &Ui, full: Rect, meta: &Meta) {
     gradient_v(p, rect.with_max_y(rect.top() + 60.0), BG.gamma_multiply(0.7), Color32::TRANSPARENT);
 }
 
-/// The stream the Play button picks: well seeded first, then 1080p over 4K over 720p, then seeders.
-fn best_stream(streams: &[Stream]) -> Option<&Stream> {
-    streams.iter().enumerate().max_by_key(|(i, s)| {
-        let info = s.info();
-        let healthy = info.seeders.is_none_or(|n| n >= 5);
-        let tier = match info.tier {
-            Tier::FullHd => 3,
-            Tier::Uhd => 2,
-            Tier::Hd => 1,
-            Tier::Sd => 0,
-        };
-        // Ties keep the addon's order.
-        (healthy, tier, info.seeders.unwrap_or(0).min(200) / 20, std::cmp::Reverse(*i))
-    })
-    .map(|(_, s)| s)
+/// The stream to start automatically: well seeded first, then 1080p, 720p, 4K (the player shows
+/// at most 1080p, so 4K only costs bandwidth), SD; then the most seeders. `tried` are skipped.
+fn best_stream<'a>(streams: &'a [Stream], tried: &HashSet<String>) -> Option<&'a Stream> {
+    streams
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| !tried.contains(&s.key()))
+        .max_by_key(|(i, s)| {
+            let info = s.info();
+            let healthy = info.seeders.is_none_or(|n| n >= 5);
+            let tier = match info.tier {
+                Tier::FullHd => 3,
+                Tier::Hd => 2,
+                Tier::Uhd => 1,
+                Tier::Sd => 0,
+            };
+            // Ties keep the addon's order.
+            (healthy, tier, info.seeders.unwrap_or(0), std::cmp::Reverse(*i))
+        })
+        .map(|(_, s)| s)
 }
 
 /// The episode to continue with and the button label for it.

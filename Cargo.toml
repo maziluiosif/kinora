@@ -29,6 +29,7 @@ axum = "0.8"
 cpal = "0.18"
 eframe = "0.35"
 egui = "0.35"
+encoding_rs = "0.8"
 egui_extras = { version = "0.35", features = ["all_loaders"] }
 ffmpeg-next = "9"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }

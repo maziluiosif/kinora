@@ -220,6 +220,15 @@ impl Stream {
         StreamInfo { tier, quality, release, notes: lines.join(" · "), seeders, size, source }
     }
 
+    /// Identifies the stream across lists: torrent and file, or the URL.
+    pub fn key(&self) -> String {
+        match (&self.info_hash, &self.url) {
+            (Some(h), _) => format!("{}:{}", h.to_lowercase(), self.file_idx.map_or(String::new(), |i| i.to_string())),
+            (None, Some(u)) => u.clone(),
+            _ => self.addon.clone() + self.name.as_deref().unwrap_or_default() + self.title.as_deref().unwrap_or_default(),
+        }
+    }
+
     /// Lowercased text the stream filter matches against.
     pub fn haystack(&self) -> String {
         [self.name.as_deref(), self.title.as_deref(), self.description.as_deref()]

@@ -280,6 +280,9 @@ async function detail(stale, type, id, videoId) {
     if (isSeries) $('#back').onclick = () => { location.hash = `#/detail/${enc(type)}/${enc(id)}`; };
     const { streams } = await api(`/api/streams/${enc(type)}/${enc(vid)}`);
     if (stale()) return;
+    // Most seeders first (Torrentio puts them after 👤); the sort is stable, so ties keep the addon order.
+    const seeds = (s) => +((s.title || s.description || '').match(/👤\s*(\d+)/)?.[1] ?? -1);
+    streams.sort((a, b) => seeds(b) - seeds(a));
     if (!streams.length) { side.querySelector('.loading').textContent = 'No streams found.'; return; }
     side.querySelector('.loading').outerHTML = `<input class="filter" id="filter" placeholder="Filter (e.g. 1080p, x264, RO)…">
       <div id="streams">${streams.map((s, i) => `
