@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kinora: a native media center in Rust</title>
+<meta name="description" content="Kinora is a fast native media center written in Rust: addon catalogs, a built-in torrent streaming engine and an embedded FFmpeg player.">
+<meta property="og:title" content="Kinora">
+<meta property="og:description" content="A fast native media center in Rust: addon catalogs, built-in torrent streaming and an FFmpeg player.">
+<meta property="og:type" content="website">
+<meta name="theme-color" content="#0c0b11">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%237b5bf5'/%3E%3Cpath d='M26 20l20 12-20 12z' fill='white'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #0c0b11; --panel: #161420; --panel2: #1f1c2c; --line: #2c2840;
+    --text: #ece9f5; --muted: #9a94b3; --accent: #7b5bf5; --accent2: #9f86ff; --ok: #3ecf8e;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif; -webkit-font-smoothing: antialiased; }
+  a { color: var(--accent2); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+  header { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--bg) 85%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent); }
+  header .wrap { display: flex; align-items: center; gap: 28px; height: 64px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 19px; color: var(--text); }
+  .brand:hover { text-decoration: none; }
+  .mark { width: 32px; height: 32px; border-radius: 9px; background: var(--accent); display: grid; place-items: center; }
+  .mark::after { content: ""; margin-left: 3px; border-left: 11px solid #fff; border-top: 7px solid transparent; border-bottom: 7px solid transparent; }
+  header nav { display: flex; gap: 22px; margin-left: auto; font-size: 14px; }
+  header nav a { color: var(--muted); }
+  header nav a:hover { color: var(--text); text-decoration: none; }
+
+  .hero { position: relative; padding: 96px 0 72px; text-align: center; overflow: hidden; }
+  .hero::before { content: ""; position: absolute; inset: -40% -10% auto; height: 640px; background: radial-gradient(closest-side, color-mix(in srgb, var(--accent) 38%, transparent), transparent); filter: blur(40px); z-index: -1; }
+  .pill { display: inline-flex; gap: 8px; align-items: center; padding: 5px 14px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--muted); font-size: 13px; }
+  .pill b { color: var(--ok); font-weight: 600; }
+  h1 { font-size: clamp(40px, 6vw, 68px); line-height: 1.05; letter-spacing: -0.03em; margin: 22px 0 18px; }
+  h1 span { background: linear-gradient(120deg, var(--accent2), #d48bff); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .lead { max-width: 640px; margin: 0 auto; color: var(--muted); font-size: 19px; }
+  .cta { display: flex; justify-content: center; flex-wrap: wrap; gap: 12px; margin-top: 34px; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 12px 22px; border-radius: 12px; font-weight: 600; color: var(--text); background: var(--panel2); border: 1px solid var(--line); }
+  .btn:hover { text-decoration: none; border-color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover { background: var(--accent2); }
+
+  /* App mockup */
+  .shot { margin: 64px auto 0; max-width: 1000px; border-radius: 16px; border: 1px solid var(--line); background: var(--bg); box-shadow: 0 40px 120px -30px color-mix(in srgb, var(--accent) 45%, transparent), 0 0 0 1px #0006; overflow: hidden; text-align: left; }
+  .bar { display: flex; gap: 7px; padding: 12px 14px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  .bar i { width: 11px; height: 11px; border-radius: 50%; background: #ff5f57; }
+  .bar i:nth-child(2) { background: #febc2e; } .bar i:nth-child(3) { background: #28c840; }
+  .app { display: grid; grid-template-columns: 72px 1fr; min-height: 440px; }
+  .side { background: var(--panel); display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 18px 0; }
+  .side .mark { width: 38px; height: 38px; margin-bottom: 10px; }
+  .side span { width: 44px; height: 40px; border-radius: 10px; background: var(--panel2); }
+  .side span.on { background: color-mix(in srgb, var(--accent) 25%, transparent); outline: 2px solid color-mix(in srgb, var(--accent) 50%, transparent); }
+  .main { padding: 18px 22px; min-width: 0; }
+  .search { height: 36px; max-width: 420px; border-radius: 18px; background: var(--panel2); border: 1px solid var(--line); color: var(--muted); font-size: 13px; display: flex; align-items: center; padding: 0 16px; }
+  .spot { margin-top: 16px; height: 170px; border-radius: 14px; padding: 22px; display: flex; flex-direction: column; justify-content: flex-end; background: linear-gradient(90deg, #0c0b11ee 30%, #0c0b1100), linear-gradient(135deg, #3b2a7a, #7b3f8f 45%, #c46b4f); }
+  .spot b { font-size: 24px; letter-spacing: -0.02em; }
+  .spot small { color: #d5d1e4; }
+  .spot em { margin-top: 10px; align-self: flex-start; font-style: normal; font-size: 13px; font-weight: 600; background: var(--accent); padding: 6px 14px; border-radius: 9px; }
+  .rowt { margin: 18px 0 10px; font-weight: 700; font-size: 14px; }
+  .posters { display: flex; gap: 12px; overflow: hidden; }
+  .posters div { flex: none; width: 92px; aspect-ratio: 2/3; border-radius: 9px; position: relative; overflow: hidden; }
+  .posters div::after { content: ""; position: absolute; left: 0; bottom: 0; height: 3px; width: var(--p, 0); background: var(--accent2); }
+
+  section { padding: 84px 0; }
+  section h2 { font-size: clamp(28px, 4vw, 40px); letter-spacing: -0.02em; margin: 0 0 12px; text-align: center; }
+  section .sub { color: var(--muted); text-align: center; max-width: 620px; margin: 0 auto 44px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 24px; transition: border-color .2s, transform .2s; }
+  .card:hover { border-color: color-mix(in srgb, var(--accent) 60%, var(--line)); transform: translateY(-2px); }
+  .card .ic { width: 42px; height: 42px; border-radius: 11px; display: grid; place-items: center; font-size: 21px; background: color-mix(in srgb, var(--accent) 18%, transparent); margin-bottom: 14px; }
+  .card h3 { margin: 0 0 6px; font-size: 17px; }
+  .card p { margin: 0; color: var(--muted); font-size: 15px; }
+
+  .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+  pre { margin: 0; background: #08070c; border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; overflow-x: auto; font: 14px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace; color: #d5d1e4; position: relative; }
+  pre .c { color: #6f6990; }
+  pre .p { color: var(--accent2); user-select: none; }
+  .copy { position: absolute; top: 10px; right: 10px; font: 12px/1 inherit; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel2); color: var(--muted); cursor: pointer; }
+  .copy:hover { color: var(--text); }
+  .label { font-size: 13px; color: var(--muted); margin: 0 0 8px 4px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
+
+  .keys { max-width: 720px; margin: 0 auto; display: grid; grid-template-columns: 1fr 1fr; gap: 10px 28px; }
+  .keys div { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); gap: 12px; }
+  kbd { font: 12px/1 ui-monospace, Menlo, monospace; padding: 5px 8px; border-radius: 7px; background: var(--panel2); border: 1px solid var(--line); border-bottom-width: 2px; color: var(--accent2); white-space: nowrap; }
+  .keys span { color: var(--muted); }
+
+  .arch { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+  .arch div { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; }
+  .arch code { color: var(--accent2); font-size: 14px; }
+  .arch p { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
+
+  .note { max-width: 760px; margin: 0 auto; padding: 20px 24px; border-radius: 14px; border: 1px solid var(--line); background: var(--panel); color: var(--muted); font-size: 14px; }
+  footer { border-top: 1px solid var(--line); padding: 34px 0; color: var(--muted); font-size: 14px; }
+  footer .wrap { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+
+  @media (max-width: 720px) {
+    header nav { display: none; }
+    .app { grid-template-columns: 1fr; } .side { display: none; }
+    .keys { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <a class="brand" href="#"><span class="mark"></span>Kinora</a>
+    <nav>
+      <a href="#features">Features</a>
+      <a href="#install">Install</a>
+      <a href="#shortcuts">Shortcuts</a>
+      <a href="https://github.com/maziluiosif/kinora">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="hero">
+    <div class="wrap">
+      <span class="pill"><b>●</b> Open source · written in Rust</span>
+      <h1>Your media center,<br><span>native and fast.</span></h1>
+      <p class="lead">Kinora browses addon catalogs, streams torrents with a built-in engine, and plays almost any format in an embedded FFmpeg player. It's one small app on your machine, with no account and no cloud.</p>
+      <div class="cta">
+        <a class="btn primary" href="#install">Get started</a>
+        <a class="btn" href="https://github.com/maziluiosif/kinora">★ View on GitHub</a>
+      </div>
+
+      <div class="shot" aria-hidden="true">
+        <div class="bar"><i></i><i></i><i></i></div>
+        <div class="app">
+          <div class="side"><div class="mark"></div><span class="on"></span><span></span><span></span><span></span></div>
+          <div class="main">
+            <div class="search">⌕&nbsp;&nbsp;Search movies &amp; series…</div>
+            <div class="spot"><small>Featured · Series</small><b>The Midnight Archive</b><small>2026 · Drama, Mystery · ★ 8.4</small><em>▶ Continue S2E5</em></div>
+            <div class="rowt">Continue watching</div>
+            <div class="posters">
+              <div style="background:linear-gradient(160deg,#5b3df5,#1b1440);--p:62%"></div>
+              <div style="background:linear-gradient(160deg,#e0714f,#3a1626);--p:30%"></div>
+              <div style="background:linear-gradient(160deg,#2fb39a,#0f2a2f);--p:85%"></div>
+              <div style="background:linear-gradient(160deg,#d4a23c,#3a2410)"></div>
+              <div style="background:linear-gradient(160deg,#4f8de0,#14203a)"></div>
+              <div style="background:linear-gradient(160deg,#b04fe0,#2a1440)"></div>
+              <div style="background:linear-gradient(160deg,#e04f7a,#3a1422)"></div>
+              <div style="background:linear-gradient(160deg,#6fd46a,#173a14)"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <section id="features">
+    <div class="wrap">
+      <h2>Everything in one binary</h2>
+      <p class="sub">A native egui interface on top of a shared Rust core. A browser UI is included too.</p>
+      <div class="grid">
+        <div class="card"><div class="ic">🧩</div><h3>Addon catalogs</h3><p>Speaks the Stremio addon protocol. Cinemeta and Torrentio come preinstalled, and you can add any other addon by its manifest URL.</p></div>
+        <div class="card"><div class="ic">⚡</div><h3>Built-in torrent streaming</h3><p>Powered by librqbit. It downloads only the file you watch, prioritizes pieces around the playhead, and supports instant seeking.</p></div>
+        <div class="card"><div class="ic">🎬</div><h3>Embedded FFmpeg player</h3><p>HEVC, AC3, DTS, MKV: if FFmpeg decodes it, Kinora plays it. You get audio track and subtitle selection and full screen.</p></div>
+        <div class="card"><div class="ic">⏯</div><h3>Resume &amp; up next</h3><p>Continue watching with progress bars, automatic resume, watched episodes, and a prompt for the next episode near the end.</p></div>
+        <div class="card"><div class="ic">🔎</div><h3>Search &amp; discover</h3><p>Search across every addon at once, browse catalogs with infinite scroll, and filter streams by quality, seeders and size.</p></div>
+        <div class="card"><div class="ic">🔒</div><h3>Local &amp; private</h3><p>No account and no telemetry. The local server only answers to 127.0.0.1, and your library is a JSON file in <code>~/.config/kinora</code>.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="install">
+    <div class="wrap">
+      <h2>Get started</h2>
+      <p class="sub">Build from source with Cargo. You need Rust 1.88+ and the FFmpeg libraries.</p>
+      <div class="steps">
+        <div>
+          <p class="label">1 · Dependencies (macOS)</p>
+<pre><button class="copy">Copy</button><span class="p">$ </span>brew install ffmpeg pkg-config
+<span class="c"># Debian/Ubuntu: libavformat-dev libavcodec-dev
+# libswscale-dev libswresample-dev libavdevice-dev
+# libavfilter-dev pkg-config libclang-dev</span></pre>
+        </div>
+        <div>
+          <p class="label">2 · Run</p>
+<pre><button class="copy">Copy</button><span class="p">$ </span>git clone https://github.com/maziluiosif/kinora
+<span class="p">$ </span>cd kinora
+<span class="p">$ </span>cargo run --release
+<span class="c"># browser UI instead:</span>
+<span class="p">$ </span>cargo run --release --bin kinora-web</pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="shortcuts">
+    <div class="wrap">
+      <h2>Keyboard first</h2>
+      <p class="sub">Every common action is one key away. Press <kbd>?</kbd> in the app for the full list.</p>
+      <div class="keys">
+        <div><kbd>⌘F</kbd> <kbd>/</kbd><span>Search</span></div>
+        <div><kbd>Space</kbd><span>Play / pause</span></div>
+        <div><kbd>⌘[</kbd> <kbd>⌥←</kbd><span>Back</span></div>
+        <div><kbd>←</kbd> <kbd>→</kbd><span>Seek 10 seconds</span></div>
+        <div><kbd>F</kbd><span>Full screen</span></div>
+        <div><kbd>↑</kbd> <kbd>↓</kbd><span>Volume</span></div>
+        <div><kbd>N</kbd><span>Next episode</span></div>
+        <div><kbd>M</kbd><span>Mute</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <h2>Under the hood</h2>
+      <p class="sub">A small, readable codebase with one shared core and two front ends.</p>
+      <div class="arch">
+        <div><code>addons.rs</code><p>Manifests, resource matching, catalog/meta/stream requests</p></div>
+        <div><code>engine.rs</code><p>librqbit session: magnet → file → stream</p></div>
+        <div><code>server.rs</code><p>Local HTTP API and range-request streaming</p></div>
+        <div><code>desktop/</code><p>egui shell, pages, and the FFmpeg + cpal player</p></div>
+        <div><code>web.rs</code><p>Browser UI with vanilla JS, embedded in the binary</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section style="padding-top:0">
+    <div class="wrap">
+      <p class="note">Kinora is an independent project and is not affiliated with Stremio. It ships no content. You are responsible for the addons you install and for what you stream under the laws of your country.</p>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>Kinora · MIT License</span>
+    <a href="https://github.com/maziluiosif/kinora">github.com/maziluiosif/kinora</a>
+  </div>
+</footer>
+
+<script>
+  document.querySelectorAll('.copy').forEach(b => b.addEventListener('click', () => {
+    const text = [...b.parentElement.childNodes].filter(n => n !== b).map(n => n.textContent).join('')
+      .split('\n').filter(l => l.startsWith('$ ')).map(l => l.slice(2)).join('\n');
+    navigator.clipboard.writeText(text).then(() => { b.textContent = 'Copied'; setTimeout(() => b.textContent = 'Copy', 1500); });
+  }));
+</script>
+</body>
+</html>

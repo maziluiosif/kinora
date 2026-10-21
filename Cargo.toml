@@ -1,0 +1,49 @@
+[package]
+name = "kinora"
+version = "0.2.0"
+rust-version = "1.88"
+edition = "2024"
+description = "A fast native media center for addon catalogs with a built-in torrent streaming engine and FFmpeg player"
+license = "MIT"
+repository = "https://github.com/maziluiosif/kinora"
+homepage = "https://maziluiosif.github.io/kinora/"
+readme = "README.md"
+keywords = ["media", "player", "torrent", "egui", "ffmpeg"]
+categories = ["multimedia::video", "gui"]
+default-run = "kinora"
+autobins = false
+
+# `cargo run` starts the desktop app.
+[[bin]]
+name = "kinora"
+path = "src/bin/desktop/main.rs"
+
+# `cargo run --bin kinora-web` serves the browser UI.
+[[bin]]
+name = "kinora-web"
+path = "src/bin/web.rs"
+
+[dependencies]
+anyhow = "1.0.104"
+axum = "0.8"
+cpal = "0.18"
+eframe = "0.35"
+egui = "0.35"
+egui_extras = { version = "0.35", features = ["all_loaders"] }
+ffmpeg-next = "9"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+librqbit = "9"
+open = "5.4.4"
+reqwest = { version = "0.12", features = ["json"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+tokio = { version = "1.54.0", features = ["full"] }
+tokio-util = { version = "0.7.20", features = ["io"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+urlencoding = "2.1.3"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

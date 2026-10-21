@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kinora</title>
+<style>
+  :root {
+    --bg: #0c0b11; --panel: #161420; --panel2: #1f1c2c; --line: #2c2840;
+    --text: #ece9f5; --muted: #9a94b3; --accent: #7b5bf5; --accent2: #9f86ff; --ok: #3ecf8e; --err: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif; }
+  a { color: inherit; text-decoration: none; }
+  button { font: inherit; color: inherit; cursor: pointer; border: 0; border-radius: 8px; padding: 8px 14px; background: var(--panel2); }
+  button:hover { background: var(--line); }
+  button.primary { background: var(--accent); color: #fff; font-weight: 600; }
+  button.primary:hover { background: var(--accent2); }
+  input, select { font: inherit; color: var(--text); background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; outline: none; }
+  input:focus, select:focus { border-color: var(--accent); }
+
+  .app { display: grid; grid-template-columns: 76px 1fr; min-height: 100vh; }
+  nav { position: sticky; top: 0; height: 100vh; background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; align-items: center; padding: 14px 0; gap: 6px; }
+  nav .logo { width: 40px; height: 40px; border-radius: 12px; background: linear-gradient(135deg, var(--accent), #c45bf5); display: grid; place-items: center; font-weight: 800; margin-bottom: 14px; }
+  nav a { width: 60px; padding: 8px 0; border-radius: 10px; text-align: center; color: var(--muted); font-size: 11px; }
+  nav a .ic { display: block; font-size: 20px; line-height: 1.2; }
+  nav a.active, nav a:hover { color: var(--text); background: var(--panel2); }
+
+  main { min-width: 0; }
+  header { position: sticky; top: 0; z-index: 5; display: flex; gap: 12px; align-items: center; padding: 12px 24px; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(8px); }
+  header input { flex: 1; max-width: 520px; }
+  .content { padding: 8px 24px 40px; }
+
+  h2 { font-size: 18px; margin: 22px 0 10px; display: flex; align-items: baseline; gap: 10px; }
+  h2 a { font-size: 12px; color: var(--accent2); font-weight: 500; }
+  .row { display: flex; gap: 14px; overflow-x: auto; padding-bottom: 8px; scrollbar-width: thin; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 16px; }
+  .card { width: 140px; flex: none; }
+  .grid .card { width: auto; }
+  .poster { aspect-ratio: 2/3; border-radius: 10px; background: var(--panel2) center/cover; border: 2px solid transparent; transition: border-color .15s, transform .15s; }
+  .card:hover .poster { border-color: var(--accent); transform: translateY(-2px); }
+  .card .t { margin-top: 6px; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card .s { font-size: 12px; color: var(--muted); }
+  .muted { color: var(--muted); }
+  .err { color: var(--err); }
+  .loading { color: var(--muted); padding: 20px 0; }
+
+  .detail { position: relative; margin: -8px -24px 0; padding: 32px 24px; min-height: calc(100vh - 60px); }
+  .detail .bg { position: absolute; inset: 0; background: center/cover; opacity: .18; z-index: -1; mask-image: linear-gradient(to bottom, #000 30%, transparent); }
+  .detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) 420px; gap: 28px; }
+  .info .logo-img { max-width: 360px; max-height: 120px; margin-bottom: 12px; }
+  .info h1 { margin: 0 0 8px; font-size: 30px; }
+  .meta-line { display: flex; flex-wrap: wrap; gap: 14px; color: var(--muted); margin-bottom: 14px; }
+  .meta-line b { color: #f5c518; }
+  .desc { max-width: 720px; color: #d5d1e4; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+  .chip { background: var(--panel2); border-radius: 999px; padding: 3px 10px; font-size: 12px; color: var(--muted); }
+  .actions { display: flex; gap: 10px; margin-top: 18px; }
+
+  .side { background: color-mix(in srgb, var(--panel) 92%, transparent); border: 1px solid var(--line); border-radius: 14px; padding: 14px; max-height: calc(100vh - 110px); overflow-y: auto; position: sticky; top: 76px; }
+  .side-head { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+  .side-head select { flex: 1; }
+  .ep { display: flex; gap: 10px; padding: 8px; border-radius: 10px; cursor: pointer; }
+  .ep:hover, .ep.active { background: var(--panel2); }
+  .ep img { width: 110px; aspect-ratio: 16/9; object-fit: cover; border-radius: 6px; background: var(--panel2); flex: none; }
+  .ep .n { font-weight: 600; }
+  .ep .d { font-size: 12px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .stream { display: grid; grid-template-columns: 74px 1fr; gap: 10px; padding: 10px; border-radius: 10px; cursor: pointer; border: 1px solid transparent; }
+  .stream:hover { background: var(--panel2); border-color: var(--line); }
+  .stream .q { font-weight: 700; font-size: 12px; white-space: pre-line; color: var(--accent2); }
+  .stream .tt { font-size: 12px; white-space: pre-line; word-break: break-word; }
+  .stream .btns { grid-column: 2; display: flex; gap: 6px; margin-top: 4px; }
+  .stream .btns button { padding: 4px 10px; font-size: 12px; }
+  .filter { width: 100%; margin-bottom: 8px; }
+
+  .addon { display: flex; gap: 14px; align-items: center; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 10px; }
+  .addon img { width: 48px; height: 48px; border-radius: 10px; object-fit: contain; background: var(--panel2); }
+  .addon .grow { flex: 1; min-width: 0; }
+  .addon .url { font-size: 11px; color: var(--muted); word-break: break-all; }
+
+  .player { position: fixed; inset: 0; z-index: 20; background: rgba(5, 4, 10, .92); display: grid; place-items: center; padding: 24px; }
+  .player .box { width: min(1100px, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 18px; }
+  .player video { width: 100%; max-height: 70vh; background: #000; border-radius: 10px; margin-bottom: 12px; }
+  .player .title { font-size: 16px; font-weight: 600; margin-bottom: 4px; word-break: break-all; }
+  .stats { display: flex; flex-wrap: wrap; gap: 18px; color: var(--muted); margin: 10px 0; font-variant-numeric: tabular-nums; }
+  .bar { height: 6px; background: var(--panel2); border-radius: 3px; overflow: hidden; }
+  .bar div { height: 100%; background: var(--accent); width: 0; transition: width .4s; }
+  .url-line { display: flex; gap: 8px; margin-top: 12px; }
+  .url-line input { flex: 1; font-size: 12px; }
+
+  @media (max-width: 900px) {
+    .detail-grid { grid-template-columns: 1fr; }
+    .side { position: static; max-height: none; }
+  }
+  @media (max-width: 560px) {
+    .app { grid-template-columns: 1fr; }
+    nav { position: fixed; bottom: 0; top: auto; height: auto; width: 100%; flex-direction: row; justify-content: space-around; padding: 6px; z-index: 10; border-right: 0; border-top: 1px solid var(--line); }
+    nav .logo { display: none; }
+    .content, header { padding-left: 16px; padding-right: 16px; }
+    .detail { margin: -8px -16px 0; padding: 20px 16px 80px; }
+    .card { width: 110px; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <nav>
+    <div class="logo">K</div>
+    <a href="#/" data-nav="board"><span class="ic">⌂</span>Board</a>
+    <a href="#/discover" data-nav="discover"><span class="ic">◎</span>Discover</a>
+    <a href="#/library" data-nav="library"><span class="ic">▤</span>Library</a>
+    <a href="#/addons" data-nav="addons"><span class="ic">⧉</span>Addons</a>
+  </nav>
+  <main>
+    <header>
+      <input id="search" type="search" placeholder="Search movies & series…" autocomplete="off">
+    </header>
+    <div class="content" id="view"></div>
+  </main>
+</div>
+<div id="player"></div>
+
+<script>
+const $ = (s, el = document) => el.querySelector(s);
+const view = $('#view');
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const enc = encodeURIComponent;
+// A CSS `url("…")` for a style attribute; addon data can't break out of the string.
+const bgUrl = (u) => u ? esc(`url(${JSON.stringify(String(u))})`) : 'none';
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, opts.body ? { method: 'POST', headers: { 'content-type': 'application/json' }, ...opts, body: JSON.stringify(opts.body) } : opts);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+function card(m) {
+  const sub = [m.releaseInfo, m.type === 'series' ? 'Series' : null].filter(Boolean).join(' · ');
+  return `<a class="card" href="#/detail/${enc(m.type)}/${enc(m.id)}">
+    <div class="poster" style="background-image:${bgUrl(m.poster)}"></div>
+    <div class="t" title="${esc(m.name)}">${esc(m.name)}</div>
+    <div class="s">${esc(sub)}</div></a>`;
+}
+
+let routeToken = 0;
+async function route() {
+  const token = ++routeToken;
+  const stale = () => token !== routeToken;
+  const parts = location.hash.replace(/^#\/?/, '').split('/').map(decodeURIComponent);
+  const page = parts[0] || 'board';
+  document.querySelectorAll('nav a').forEach(a => a.classList.toggle('active', a.dataset.nav === page));
+  window.scrollTo(0, 0);
+  view.innerHTML = '<div class="loading">Loading…</div>';
+  try {
+    if (page === 'board') await board(stale);
+    else if (page === 'discover') await discover(stale, parts[1], parts[2], parts[3]);
+    else if (page === 'search') await search(stale, parts[1] || '');
+    else if (page === 'detail') await detail(stale, parts[1], parts[2], parts[3]);
+    else if (page === 'library') await library(stale);
+    else if (page === 'addons') await addons(stale);
+  } catch (e) {
+    if (!stale()) view.innerHTML = `<p class="err">${esc(e.message)}</p>`;
+  }
+}
+window.addEventListener('hashchange', route);
+
+// ---- Board ----
+async function board(stale) {
+  const [cats, lib] = await Promise.all([api('/api/catalogs'), api('/api/library')]);
+  if (stale()) return;
+  const cw = lib.filter(i => i.last_video).sort((a, b) => b.last_watched - a.last_watched);
+  view.innerHTML = (cw.length ? `<h2>Continue watching</h2><div class="row">${cw.map(i => card({ ...i, type: i.kind })).join('')}</div>` : '')
+    + cats.filter(c => c.board).map((c, i) => `<section><h2>${esc(c.name)} - ${esc(c.type)}
+        <a href="#/discover/${enc(c.addon)}/${enc(c.type)}/${enc(c.id)}">See all ›</a></h2>
+        <div class="row" id="row${i}"><div class="loading">Loading…</div></div></section>`).join('');
+  cats.filter(c => c.board).forEach(async (c, i) => {
+    const el = $(`#row${i}`);
+    try {
+      const { metas = [] } = await api(`/api/catalog/${enc(c.addon)}/${enc(c.type)}/${enc(c.id)}`);
+      if (!stale()) el.innerHTML = metas.slice(0, 20).map(card).join('') || '<span class="muted">Empty</span>';
+    } catch (e) { el.innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+  });
+}
+
+// ---- Discover ----
+async function discover(stale, addon, type, id) {
+  const cats = (await api('/api/catalogs')).filter(c => c.board);
+  if (stale()) return;
+  const cur = cats.find(c => c.addon === addon && c.type === type && c.id === id) || cats[0];
+  if (!cur) { view.innerHTML = '<p class="muted">No catalogs. Install an addon.</p>'; return; }
+  view.innerHTML = `<h2>Discover</h2>
+    <select id="cat">${cats.map((c, i) => `<option value="${i}" ${c === cur ? 'selected' : ''}>${esc(c.addonName)} · ${esc(c.name)} - ${esc(c.type)}</option>`).join('')}</select>
+    <div class="grid" id="grid" style="margin-top:16px"></div>
+    <p><button id="more">Load more</button></p>`;
+  $('#cat').onchange = (e) => { const c = cats[e.target.value]; location.hash = `#/discover/${enc(c.addon)}/${enc(c.type)}/${enc(c.id)}`; };
+  let skip = 0;
+  const load = async () => {
+    $('#more').disabled = true;
+    const { metas = [] } = await api(`/api/catalog/${enc(cur.addon)}/${enc(cur.type)}/${enc(cur.id)}?skip=${skip || ''}`);
+    if (stale()) return;
+    skip += metas.length;
+    $('#grid').insertAdjacentHTML('beforeend', metas.map(card).join(''));
+    $('#more').disabled = false;
+    $('#more').style.display = metas.length ? '' : 'none';
+  };
+  $('#more').onclick = load;
+  await load();
+}
+
+// ---- Search ----
+let searchTimer;
+$('#search').addEventListener('input', (e) => {
+  clearTimeout(searchTimer);
+  const q = e.target.value.trim();
+  searchTimer = setTimeout(() => { if (q.length > 1) location.hash = `#/search/${enc(q)}`; }, 350);
+});
+async function search(stale, q) {
+  $('#search').value = q;
+  const rows = await api(`/api/search?q=${enc(q)}`);
+  if (stale()) return;
+  view.innerHTML = rows.map(r => `<h2>${esc(r.name)} <span class="muted" style="font-size:12px">${esc(r.addon)}</span></h2>
+    <div class="row">${(r.metas || []).map(card).join('') || '<span class="muted">No results</span>'}</div>`).join('')
+    || '<p class="muted">No searchable catalogs.</p>';
+}
+
+// ---- Detail ----
+async function detail(stale, type, id, videoId) {
+  const [{ meta }, lib] = await Promise.all([api(`/api/meta/${enc(type)}/${enc(id)}`), api('/api/library')]);
+  if (stale()) return;
+  const saved = lib.some(i => i.id === id && i.saved);
+  const libEntry = lib.find(i => i.id === id);
+  const videos = (meta.videos || []).slice().sort((a, b) => (a.season - b.season) || (a.episode - b.episode));
+  const isSeries = type === 'series' || videos.length > 1;
+  const genres = meta.genres || meta.genre || [];
+
+  view.innerHTML = `<div class="detail"><div class="bg" style="background-image:${bgUrl(meta.background)}"></div>
+    <div class="detail-grid">
+      <div class="info">
+        ${meta.logo ? `<img class="logo-img" src="${esc(meta.logo)}" alt="${esc(meta.name)}" onerror="this.replaceWith(Object.assign(document.createElement('h1'), { textContent: this.alt }))">` : `<h1>${esc(meta.name)}</h1>`}
+        <div class="meta-line">
+          ${meta.releaseInfo ? `<span>${esc(meta.releaseInfo)}</span>` : ''}
+          ${meta.runtime ? `<span>${esc(meta.runtime)}</span>` : ''}
+          ${meta.imdbRating ? `<span><b>IMDb</b> ${esc(meta.imdbRating)}</span>` : ''}
+        </div>
+        <div class="chips">${genres.map(g => `<span class="chip">${esc(g)}</span>`).join('')}</div>
+        <p class="desc">${esc(meta.description)}</p>
+        ${meta.cast?.length ? `<p class="muted">Cast: ${esc(meta.cast.slice(0, 6).join(', '))}</p>` : ''}
+        ${meta.director?.length ? `<p class="muted">Director: ${esc([].concat(meta.director).join(', '))}</p>` : ''}
+        <div class="actions">
+          <button id="lib" class="${saved ? '' : 'primary'}">${saved ? '✓ In library' : '+ Add to library'}</button>
+          ${meta.trailerStreams?.[0]?.ytId ? `<a href="https://www.youtube.com/watch?v=${esc(meta.trailerStreams[0].ytId)}" target="_blank"><button>▶ Trailer</button></a>` : ''}
+        </div>
+      </div>
+      <div class="side" id="side"></div>
+    </div></div>`;
+
+  const libBody = (extra) => ({ id, type, name: meta.name, poster: meta.poster, ...extra });
+  $('#lib').onclick = async () => { await api('/api/library', { body: libBody({ saved: !saved }) }); route(); };
+
+  const side = $('#side');
+  const showEpisodes = (season) => {
+    const seasons = [...new Set(videos.map(v => v.season))].sort((a, b) => (a === 0) - (b === 0) || a - b);
+    season ??= seasons.find(s => s > 0) ?? seasons[0];
+    side.innerHTML = `<div class="side-head"><select id="season">${seasons.map(s => `<option value="${s}" ${s === season ? 'selected' : ''}>${s === 0 ? 'Specials' : 'Season ' + s}</option>`).join('')}</select></div>
+      ${videos.filter(v => v.season === season).map(v => `
+        <a class="ep ${libEntry?.last_video === v.id ? 'active' : ''}" href="#/detail/${enc(type)}/${enc(id)}/${enc(v.id)}">
+          <img src="${esc(v.thumbnail)}" loading="lazy" onerror="this.style.visibility='hidden'">
+          <div><div class="n">${v.episode}. ${esc(v.name || v.title || 'Episode ' + v.episode)}</div>
+          <div class="d">${esc(v.released ? new Date(v.released).toLocaleDateString() : '')} ${esc(v.overview || v.description || '')}</div></div>
+        </a>`).join('')}`;
+    $('#season').onchange = (e) => showEpisodes(Number(e.target.value));
+  };
+
+  const showStreams = async (vid) => {
+    const video = videos.find(v => v.id === vid);
+    const back = isSeries ? `<button id="back">‹ Episodes</button>` : '';
+    const label = video ? `S${video.season}E${video.episode} ${esc(video.name || video.title || '')}` : 'Streams';
+    side.innerHTML = `<div class="side-head">${back}<b style="flex:1">${label}</b></div><div class="loading">Fetching streams…</div>`;
+    if (isSeries) $('#back').onclick = () => { location.hash = `#/detail/${enc(type)}/${enc(id)}`; };
+    const { streams } = await api(`/api/streams/${enc(type)}/${enc(vid)}`);
+    if (stale()) return;
+    if (!streams.length) { side.querySelector('.loading').textContent = 'No streams found.'; return; }
+    side.querySelector('.loading').outerHTML = `<input class="filter" id="filter" placeholder="Filter (e.g. 1080p, x264, RO)…">
+      <div id="streams">${streams.map((s, i) => `
+        <div class="stream" data-i="${i}" data-text="${esc((s.name + ' ' + s.title + ' ' + (s.description || '')).toLowerCase())}">
+          <div class="q">${esc((s.name || s.addon).replace(/^Torrentio\n?/, '') || s.addon)}</div>
+          <div class="tt">${esc(s.title || s.description || s.url)}</div>
+          <div class="btns"><button class="primary" data-act="ext">▶ Play</button><button data-act="web">Play in browser</button></div>
+        </div>`).join('')}</div>`;
+    $('#filter').oninput = (e) => {
+      const terms = e.target.value.toLowerCase().split(/\s+/).filter(Boolean);
+      side.querySelectorAll('.stream').forEach(el => el.style.display = terms.every(t => el.dataset.text.includes(t)) ? '' : 'none');
+    };
+    $('#streams').onclick = (e) => {
+      const el = e.target.closest('.stream');
+      if (!el) return;
+      const external = e.target.dataset.act !== 'web';
+      const title = video ? `${meta.name} S${video.season}E${video.episode}` : meta.name;
+      api('/api/library', { body: libBody({ video: vid }) });
+      play(streams[el.dataset.i], title, external);
+    };
+  };
+
+  if (videoId) showStreams(videoId);
+  else if (isSeries && videos.length) showEpisodes(videos.find(v => v.id === libEntry?.last_video)?.season);
+  else showStreams(meta.behaviorHints?.defaultVideoId || id);
+}
+
+// ---- Player ----
+let statusTimer;
+function closePlayer() {
+  clearInterval(statusTimer);
+  $('#player').innerHTML = '';
+}
+async function play(stream, title, external) {
+  closePlayer();
+  const p = $('#player');
+  p.innerHTML = `<div class="player"><div class="box">
+    <div class="title">${esc(title)}</div>
+    <div class="muted" id="pstate">${stream.infoHash ? 'Fetching torrent metadata from peers…' : 'Starting…'}</div>
+    <div id="pbody"></div>
+    <div class="actions"><button id="pclose">Close</button><button id="pstop">Stop & close</button></div>
+  </div></div>`;
+  $('#pclose').onclick = closePlayer;
+  $('#pstop').onclick = () => { api('/api/stop', { method: 'POST' }); closePlayer(); };
+  let res;
+  try {
+    res = await api('/api/play', { body: {
+      infoHash: stream.infoHash, fileIdx: stream.fileIdx, filename: stream.behaviorHints?.filename,
+      sources: stream.sources || [], url: stream.url, title, external,
+    } });
+  } catch (e) {
+    $('#pstate').innerHTML = `<span class="err">${esc(e.message)}</span>`;
+    return;
+  }
+  if (!$('#pbody')) return;
+  $('#pstate').textContent = res.file_name ? res.file_name : res.url;
+  $('#pbody').innerHTML = `${external ? '' : `<video controls autoplay src="${esc(res.url)}"></video>`}
+    ${res.player ? `<p>Opened in <b>${esc(res.player)}</b>.</p>` : ''}
+    ${res.torrent_id != null ? `<div class="stats" id="pstats">Connecting…</div><div class="bar"><div id="pbar"></div></div>` : ''}
+    <div class="url-line"><input readonly value="${esc(res.url)}" onclick="this.select()">
+      <button id="pcopy">Copy URL</button>${external ? '' : '<button id="pext">Open in external player</button>'}</div>`;
+  $('#pcopy').onclick = () => navigator.clipboard?.writeText(res.url);
+  if (!external) $('#pext').onclick = () => { $('video')?.pause(); api('/api/play', { body: { url: res.url, title, external: true } }).catch(e => alertBox(e)); };
+  const v = $('video');
+  if (v) v.onerror = () => $('#pstate').innerHTML = `${esc(res.file_name || '')} <span class="err">· The browser can't decode this file (MKV/HEVC/AC3 are common). Use the external player.</span>`;
+  if (res.torrent_id != null) {
+    const tick = async () => {
+      try {
+        const s = await api(`/api/status/${res.torrent_id}`);
+        const done = s.file_progress?.[res.file_idx] ?? 0;
+        const pct = res.file_len ? (done / res.file_len * 100) : 0;
+        const peers = s.live?.snapshot?.peer_stats;
+        $('#pstats').innerHTML = `<span>⬇ ${esc(s.live?.download_speed?.human_readable || '0')}</span>
+          <span>⬆ ${esc(s.live?.upload_speed?.human_readable || '0')}</span>
+          <span>Peers ${peers ? `${peers.live}/${peers.seen}` : '–'}</span>
+          <span>Downloaded ${(done / 1048576).toFixed(0)} / ${(res.file_len / 1048576).toFixed(0)} MB (${pct.toFixed(1)}%)</span>
+          <span>${esc(s.state)}</span>`;
+        $('#pbar').style.width = pct + '%';
+      } catch { clearInterval(statusTimer); }
+    };
+    tick();
+    statusTimer = setInterval(tick, 1500);
+  }
+}
+function alertBox(e) { const el = $('#pstate'); if (el) el.innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePlayer(); });
+
+// ---- Library ----
+async function library(stale) {
+  const items = (await api('/api/library')).filter(i => i.saved);
+  if (stale()) return;
+  view.innerHTML = `<h2>Library</h2>` + (items.length
+    ? `<div class="grid">${items.map(i => card({ ...i, type: i.kind })).join('')}</div>`
+    : '<p class="muted">Your library is empty. Use “Add to library” on any title.</p>');
+}
+
+// ---- Addons ----
+async function addons(stale) {
+  const list = await api('/api/addons');
+  if (stale()) return;
+  view.innerHTML = `<h2>Addons</h2>
+    <div class="url-line" style="margin-bottom:16px"><input id="aurl" placeholder="Addon manifest URL (…/manifest.json)"><button class="primary" id="ainst">Install</button></div>
+    <p id="amsg"></p>
+    ${list.map(a => `<div class="addon">
+      ${a.manifest.logo ? `<img src="${esc(a.manifest.logo)}" onerror="this.style.visibility='hidden'">` : '<img>'}
+      <div class="grow"><b>${esc(a.manifest.name)}</b> <span class="muted">v${esc(a.manifest.version)}</span>
+        <div class="muted">${esc((a.manifest.description || '').slice(0, 180))}</div>
+        <div class="url">${esc(a.url)}</div></div>
+      <button data-id="${esc(a.manifest.id)}">Uninstall</button></div>`).join('')}`;
+  $('#ainst').onclick = async () => {
+    try { await api('/api/addons', { body: { url: $('#aurl').value } }); route(); }
+    catch (e) { $('#amsg').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+  };
+  view.querySelectorAll('button[data-id]').forEach(b => b.onclick = async () => {
+    await api(`/api/addons/${enc(b.dataset.id)}`, { method: 'DELETE' });
+    route();
+  });
+}
+
+route();
+</script>
+</body>
+</html>
