@@ -27,6 +27,11 @@ pub fn is_romanian(lang: &str) -> bool {
     matches!(lang.to_lowercase().as_str(), "ron" | "rum" | "ro" | "romanian" | "română")
 }
 
+/// Whether two language codes name the same language (`rum` and `ron`, `en` and `eng`).
+pub fn same_lang(a: &str, b: &str) -> bool {
+    !a.is_empty() && !b.is_empty() && lang_name(a) == lang_name(b)
+}
+
 /// Display name for the ISO 639 codes addons use.
 pub fn lang_name(code: &str) -> String {
     let name = match code.to_lowercase().as_str() {

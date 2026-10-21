@@ -137,17 +137,24 @@ pub fn poster_card(ui: &mut Ui, env: &mut Env, c: &Card, width: f32) -> bool {
             paint_icon(p, Rect::from_center_size(chip.left_center() + vec2(11.0, 0.0), vec2(11.0, 11.0)), Icon::Star, GOLD);
             p.galley(pos2(chip.left() + 19.0, chip.center().y - galley.size().y / 2.0), galley, Color32::WHITE);
         }
+        // The play button starts playback; the rest of the poster opens the details.
+        let mut play = false;
         if hover > 0.0 {
+            let pr = ui
+                .interact(Rect::from_center_size(r.center(), vec2(52.0, 52.0)), resp.id.with("play"), Sense::click())
+                .on_hover_text(if c.progress.is_some() { "Continue" } else { "Play" });
+            let big = ui.ctx().animate_bool_with_time(pr.id, pr.hovered(), 0.12);
             p.rect_filled(r, 12, Color32::from_black_alpha((70.0 * hover) as u8));
-            p.circle_filled(r.center(), 24.0, ACCENT.gamma_multiply(hover));
+            p.circle_filled(r.center(), 24.0 + 4.0 * big, ACCENT.lerp_to_gamma(ACCENT_HI, big).gamma_multiply(hover));
             paint_icon(p, Rect::from_center_size(r.center() + vec2(2.0, 0.0), vec2(20.0, 20.0)), Icon::Play, Color32::WHITE.gamma_multiply(hover));
             p.rect_stroke(r, 12, Stroke::new(2.0, ACCENT_HI.gamma_multiply(hover)), StrokeKind::Inside);
+            play = pr.clicked();
         }
         if let Some(f) = c.progress {
             progress_bar(&p.with_clip_rect(r.shrink2(vec2(6.0, 0.0))), r.shrink2(vec2(10.0, 6.0)), f);
         }
         let resp = resp.on_hover_cursor(CursorIcon::PointingHand);
-        let mut clicked = resp.clicked();
+        let mut clicked = resp.clicked() && !play;
         if c.dismissable && (resp.hovered() || hover > 0.5) {
             let x = Rect::from_center_size(r.right_top() + vec2(-18.0, 18.0), vec2(26.0, 26.0));
             let xr = ui.interact(x, resp.id.with("dismiss"), Sense::click()).on_hover_text("Remove from Continue watching");
@@ -161,8 +168,8 @@ pub fn poster_card(ui: &mut Ui, env: &mut Env, c: &Card, width: f32) -> bool {
         ui.add_space(6.0);
         ui.add(Label::new(RichText::new(c.name).font(semibold(13.5))).truncate());
         ui.add(Label::new(muted(&c.sub, 12.0)).truncate());
-        if clicked {
-            env.go(Route::Detail { kind: c.kind.into(), id: c.id.into() });
+        if clicked || play {
+            env.go(Route::Detail { kind: c.kind.into(), id: c.id.into(), play });
         }
     });
     dismiss
@@ -311,6 +318,7 @@ fn lib_update(m: &MetaPreview, saved: bool) -> LibUpdate {
         poster: m.poster.clone(),
         saved: Some(saved),
         video: None,
+        stream: None,
     }
 }
 
@@ -432,12 +440,15 @@ impl Board {
             ui.multiply_opacity(fade.max(0.3));
             let saved = env.lib_item(&m.id).is_some_and(|i| i.saved);
             ui.horizontal(|ui| {
-                if button(ui, Kind::Primary, Some(Icon::Play), "Watch now").clicked() {
-                    env.go(Route::Detail { kind: m.kind.clone(), id: m.id.clone() });
+                if button(ui, Kind::Primary, Some(Icon::Play), "Watch now").on_hover_text("Starts the best source right away").clicked() {
+                    env.go(Route::Detail { kind: m.kind.clone(), id: m.id.clone(), play: true });
                 }
                 let (icon, text) = if saved { (Icon::Check, "In library") } else { (Icon::Plus, "My library") };
                 if button(ui, Kind::Secondary, Some(icon), text).clicked() {
                     env.toggle_saved(lib_update(m, !saved));
+                }
+                if button(ui, Kind::Ghost, None, "Details").clicked() {
+                    env.go(Route::Detail { kind: m.kind.clone(), id: m.id.clone(), play: false });
                 }
             });
             ui.add_space(14.0);

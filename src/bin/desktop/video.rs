@@ -39,6 +39,8 @@ const PACKET_QUEUE_MAX: usize = 3000;
 pub struct Track {
     pub index: usize,
     pub label: String,
+    /// Language code from the container, lowercase; empty when unknown.
+    pub lang: String,
 }
 
 pub struct Info {
@@ -438,6 +440,10 @@ fn start_audio(shared: Arc<Shared>) -> Result<(cpal::Stream, u32, u16)> {
     Ok((stream, rate, channels))
 }
 
+fn track_lang(s: &ff::Stream) -> String {
+    s.metadata().get("language").filter(|l| *l != "und").unwrap_or_default().to_lowercase()
+}
+
 fn track_label(s: &ff::Stream, n: usize) -> String {
     let md = s.metadata();
     let mut parts = Vec::new();
@@ -509,7 +515,11 @@ fn demux(
     for s in input.streams() {
         let params = s.parameters();
         match params.medium() {
-            Media::Audio => info.audio_tracks.push(Track { index: s.index(), label: track_label(&s, info.audio_tracks.len() + 1) }),
+            Media::Audio => info.audio_tracks.push(Track {
+                index: s.index(),
+                label: track_label(&s, info.audio_tracks.len() + 1),
+                lang: track_lang(&s),
+            }),
             Media::Subtitle if is_text_sub(params.id()) => {
                 let lang = s.metadata().get("language").unwrap_or_default().to_lowercase();
                 // Romanian first, otherwise a forced track (foreign dialogue only).
@@ -519,7 +529,11 @@ fn demux(
                 } else if s.disposition().contains(ff::format::stream::Disposition::FORCED) && forced.is_none() {
                     forced = Some(s.index());
                 }
-                info.sub_tracks.push(Track { index: s.index(), label: track_label(&s, info.sub_tracks.len() + 1) });
+                info.sub_tracks.push(Track {
+                    index: s.index(),
+                    label: track_label(&s, info.sub_tracks.len() + 1),
+                    lang: track_lang(&s),
+                });
             }
             _ => {}
         }

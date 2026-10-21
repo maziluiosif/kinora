@@ -30,6 +30,28 @@ pub struct LibItem {
     /// Videos played to (almost) the end.
     #[serde(default)]
     pub watched: Vec<String>,
+    /// The stream `last_video` was played from (an app-defined key), to replay the same one.
+    #[serde(default)]
+    pub last_stream: Option<String>,
+    /// The subtitles last picked in the player.
+    #[serde(default)]
+    pub subtitle: Option<SubtitlePref>,
+}
+
+/// Subtitles picked for `video`. The same video gets the same track back; other videos of the
+/// title (the next episode) get the same language.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SubtitlePref {
+    pub video: String,
+    /// Language code; empty when subtitles were turned off.
+    #[serde(default)]
+    pub lang: String,
+    /// Stream index of an embedded track.
+    #[serde(default)]
+    pub embedded: Option<usize>,
+    /// URL of an online subtitle.
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 impl LibItem {
@@ -48,6 +70,9 @@ pub struct LibUpdate {
     pub poster: Option<String>,
     pub saved: Option<bool>,
     pub video: Option<String>,
+    /// Key of the stream `video` is played from.
+    #[serde(default)]
+    pub stream: Option<String>,
 }
 
 pub struct Library {
@@ -84,6 +109,8 @@ impl Library {
                     time_offset: 0.0,
                     duration: 0.0,
                     watched: Vec::new(),
+                    last_stream: None,
+                    subtitle: None,
                 });
                 items.len() - 1
             }
@@ -100,6 +127,7 @@ impl Library {
                 item.duration = 0.0;
             }
             item.last_video = Some(video);
+            item.last_stream = u.stream;
             item.last_watched = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
         }
         Self::save(&self.path, &mut items)
@@ -116,6 +144,13 @@ impl Library {
         if duration > 0.0 && time_offset / duration > 0.9 && !item.watched.iter().any(|w| w == video) {
             item.watched.push(video.to_string());
         }
+        Self::save(&self.path, &mut items)
+    }
+
+    pub fn set_subtitle(&self, id: &str, pref: SubtitlePref) -> Result<()> {
+        let mut items = self.items.lock().unwrap();
+        let Some(item) = items.iter_mut().find(|i| i.id == id) else { return Ok(()) };
+        item.subtitle = Some(pref);
         Self::save(&self.path, &mut items)
     }
 

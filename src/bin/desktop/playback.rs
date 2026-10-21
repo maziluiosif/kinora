@@ -8,6 +8,7 @@ use eframe::egui::{
     vec2,
 };
 use serde_json::Value;
+use kinora::library::SubtitlePref;
 use kinora::subtitles::{self, Cue, SubtitleTrack};
 use kinora::{Core, PlayReq as CoreReq, player};
 
@@ -62,8 +63,10 @@ pub struct PlayerView {
     /// The online subtitle shown, and one being downloaded.
     online_sub: Option<usize>,
     online_loading: Option<(usize, Task<Vec<Cue>>)>,
-    /// Whether a Romanian online subtitle was considered once the stream opened.
+    /// Whether the initial subtitles (remembered or Romanian) were chosen.
     subs_auto: bool,
+    /// The subtitles picked last time for this title.
+    sub_pref: Option<SubtitlePref>,
 }
 
 impl PlayerView {
@@ -79,6 +82,7 @@ impl PlayerView {
             external: false,
         };
         let started = env.spawn(move |core| async move { core.play(core_req).await });
+        let sub_pref = env.lib_item(&req.lib.id).and_then(|i| i.subtitle.clone());
         let (kind, vid, filename) = (req.lib.kind.clone(), req.lib.video.clone(), s.behavior_hints.filename.clone());
         let online_subs = env.spawn(move |core| async move {
             Ok(match vid {
@@ -110,23 +114,42 @@ impl PlayerView {
             online_sub: None,
             online_loading: None,
             subs_auto: false,
+            sub_pref,
         }
     }
 
-    /// Picks a Romanian online subtitle when the file has no Romanian track, and applies
+    /// Chooses the initial subtitles once the stream is open (see `initial_subs`), and applies
     /// downloads as they finish.
     fn update_subs(&mut self, env: &Env) {
         let Some(v) = &mut self.video else { return };
         let Some(Ok(info)) = &v.info else { return };
-        if !self.subs_auto
-            && let Some(Ok(tracks)) = self.online_subs.get()
-        {
-            self.subs_auto = true;
-            if !info.sub_romanian
-                && let Some(i) = tracks.iter().position(|t| subtitles::is_romanian(&t.lang))
-            {
-                let url = tracks[i].url.clone();
-                self.online_loading = Some((i, env.spawn(move |core| async move { core.subtitle_cues(&url).await })));
+        if !self.subs_auto {
+            let online = match self.online_subs.get() {
+                Some(Ok(t)) => Some(t.as_slice()),
+                Some(Err(_)) => Some(&[][..]),
+                None => None,
+            };
+            let pick = initial_subs(info, online, self.sub_pref.as_ref(), self.video_id.as_deref());
+            match pick {
+                SubPick::Wait => {}
+                SubPick::Keep => self.subs_auto = true,
+                SubPick::Off => {
+                    self.subs_auto = true;
+                    if info.sub.is_some() {
+                        v.set_sub_track(None);
+                    }
+                }
+                SubPick::Embedded(i) => {
+                    self.subs_auto = true;
+                    if info.sub != Some(i) {
+                        v.set_sub_track(Some(i));
+                    }
+                }
+                SubPick::Online(i) => {
+                    self.subs_auto = true;
+                    let url = online.and_then(|o| o.get(i)).map(|t| t.url.clone()).unwrap_or_default();
+                    self.online_loading = Some((i, env.spawn(move |core| async move { core.subtitle_cues(&url).await })));
+                }
             }
         }
         let done = match &mut self.online_loading {
@@ -148,6 +171,18 @@ impl PlayerView {
                 Err(e) => self.osd(format!("Subtitles failed: {e}")),
             }
         }
+    }
+
+    /// Remembers a subtitle choice made in the menu for this title.
+    fn remember_subs(&mut self, env: &Env, lang: String, embedded: Option<usize>, url: Option<String>) {
+        let Some(video) = self.video_id.clone() else { return };
+        let pref = SubtitlePref { video, lang, embedded, url };
+        if let Err(e) = env.core.library.set_subtitle(&self.lib_id, pref.clone()) {
+            tracing::warn!("saving the subtitle choice failed: {e:#}");
+        }
+        self.sub_pref = Some(pref);
+        // A manual pick wins over a choice still pending.
+        self.subs_auto = true;
     }
 
     fn shift_subs(&mut self, delta: f64) {
@@ -689,16 +724,25 @@ impl PlayerView {
         if let Some(i) = audio_choice {
             v.set_audio_track(i);
         }
+        let mut remember = None;
         if let Some(i) = sub_choice {
+            let lang = match (&v.info, i) {
+                (Some(Ok(info)), Some(i)) => info.sub_tracks.iter().find(|t| t.index == i).map(|t| t.lang.clone()).unwrap_or_default(),
+                _ => String::new(),
+            };
             v.set_sub_track(i);
             self.online_sub = None;
             self.online_loading = None;
+            // An embedded track without a language still restores on this video, as "und".
+            let lang = if i.is_some() && lang.is_empty() { "und".to_string() } else { lang };
+            remember = Some((lang, i, None));
         }
         if let Some(i) = online_choice
             && let Some(t) = online.get(i)
         {
             let (url, core) = (t.url.clone(), env.core.clone());
             self.online_loading = Some((i, Task::spawn(&env.rt, &env.ctx, async move { core.subtitle_cues(&url).await })));
+            remember = Some((t.lang.clone(), None, Some(t.url.clone())));
         }
         if external && let Some(url) = &self.url {
             v.set_paused(true);
@@ -714,6 +758,9 @@ impl PlayerView {
         }
         if mute {
             self.toggle_mute();
+        }
+        if let Some((lang, embedded, url)) = remember {
+            self.remember_subs(env, lang, embedded, url);
         }
         if delay != 0.0 {
             self.shift_subs(delay);
@@ -804,5 +851,108 @@ fn subtitle_ui(ui: &Ui, rect: Rect, bottom: f32, text: &str) {
         painter.rect_filled(r.expand2(vec2(10.0, 2.0)), 6, Color32::from_black_alpha(160));
         y += g.size().y + 2.0;
         painter.galley(r.min, g, Color32::WHITE);
+    }
+}
+
+enum SubPick {
+    /// Not decided yet: waiting for the online list.
+    Wait,
+    /// Leave what the player picked (an embedded Romanian or forced track, or nothing).
+    Keep,
+    Off,
+    Embedded(usize),
+    Online(usize),
+}
+
+/// The subtitles to start with. The same video gets back the exact track picked last time;
+/// another video of the title (the next episode) gets the same language, embedded if the file
+/// has it, otherwise online. Without a saved choice: Romanian, from the file or online.
+fn initial_subs(info: &video::Info, online: Option<&[SubtitleTrack]>, pref: Option<&SubtitlePref>, video: Option<&str>) -> SubPick {
+    let embedded_lang = |lang: &str| info.sub_tracks.iter().find(|t| subtitles::same_lang(&t.lang, lang)).map(|t| t.index);
+    if let Some(p) = pref {
+        if p.lang.is_empty() {
+            return SubPick::Off;
+        }
+        if video == Some(p.video.as_str()) {
+            if let Some(i) = p.embedded.filter(|i| info.sub_tracks.iter().any(|t| t.index == *i)) {
+                return SubPick::Embedded(i);
+            }
+            if let Some(url) = &p.url {
+                let Some(online) = online else { return SubPick::Wait };
+                if let Some(i) = online.iter().position(|t| &t.url == url) {
+                    return SubPick::Online(i);
+                }
+            }
+        }
+        if let Some(i) = embedded_lang(&p.lang) {
+            return SubPick::Embedded(i);
+        }
+        let Some(online) = online else { return SubPick::Wait };
+        return match online.iter().position(|t| subtitles::same_lang(&t.lang, &p.lang)) {
+            Some(i) => SubPick::Online(i),
+            None => SubPick::Keep,
+        };
+    }
+    if info.sub_romanian {
+        return SubPick::Keep;
+    }
+    let Some(online) = online else { return SubPick::Wait };
+    match online.iter().position(|t| subtitles::is_romanian(&t.lang)) {
+        Some(i) => SubPick::Online(i),
+        None => SubPick::Keep,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::video::{Info, Track};
+
+    fn info(subs: &[(usize, &str)], romanian: Option<usize>) -> Info {
+        Info {
+            duration: None,
+            audio_tracks: Vec::new(),
+            sub_tracks: subs.iter().map(|&(index, lang)| Track { index, label: String::new(), lang: lang.into() }).collect(),
+            audio: None,
+            sub: romanian,
+            sub_romanian: romanian.is_some(),
+        }
+    }
+
+    fn online(langs: &[&str]) -> Vec<SubtitleTrack> {
+        langs.iter().enumerate().map(|(i, l)| SubtitleTrack { id: i.to_string(), url: format!("u{i}"), lang: (*l).into(), addon: String::new() }).collect()
+    }
+
+    fn pref(video: &str, lang: &str, embedded: Option<usize>, url: Option<&str>) -> SubtitlePref {
+        SubtitlePref { video: video.into(), lang: lang.into(), embedded, url: url.map(String::from) }
+    }
+
+    #[test]
+    fn defaults_to_romanian() {
+        let o = online(&["eng", "ron"]);
+        assert!(matches!(initial_subs(&info(&[(2, "eng")], None), None, None, Some("v")), SubPick::Wait));
+        assert!(matches!(initial_subs(&info(&[(2, "eng")], None), Some(&o), None, Some("v")), SubPick::Online(1)));
+        assert!(matches!(initial_subs(&info(&[(2, "rum")], Some(2)), None, None, Some("v")), SubPick::Keep));
+    }
+
+    #[test]
+    fn same_video_gets_the_same_track() {
+        let o = online(&["ron", "ron", "eng"]);
+        let p = pref("v", "ron", None, Some("u1"));
+        assert!(matches!(initial_subs(&info(&[], None), Some(&o), Some(&p), Some("v")), SubPick::Online(1)));
+        let p = pref("v", "eng", Some(3), None);
+        assert!(matches!(initial_subs(&info(&[(2, "rum"), (3, "eng")], Some(2)), None, Some(&p), Some("v")), SubPick::Embedded(3)));
+        let p = pref("v", "", None, None);
+        assert!(matches!(initial_subs(&info(&[(2, "rum")], Some(2)), None, Some(&p), Some("v")), SubPick::Off));
+    }
+
+    #[test]
+    fn next_episode_gets_the_same_language() {
+        let p = pref("e1", "eng", None, Some("old"));
+        assert!(matches!(initial_subs(&info(&[(4, "en")], None), None, Some(&p), Some("e2")), SubPick::Embedded(4)));
+        let o = online(&["ron", "eng"]);
+        assert!(matches!(initial_subs(&info(&[], None), Some(&o), Some(&p), Some("e2")), SubPick::Online(1)));
+        let p = pref("e1", "", None, None);
+        assert!(matches!(initial_subs(&info(&[], None), None, Some(&p), Some("e2")), SubPick::Off));
     }
 }

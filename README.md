@@ -27,15 +27,19 @@ libswscale-dev libswresample-dev libavdevice-dev libavfilter-dev pkg-config libc
   is configured with `language=romanian|qualityfilter=cam,scr,threed`. You can install or remove
   any other addon by its `manifest.json` URL from the Addons page.
 - **Board** with every addon catalog, **Discover** with infinite scroll, and **Search** across all addons.
+  The play button on a poster (and **Watch now**) starts playback right away, continuing where
+  you left off. Clicking the rest of the poster opens the details page.
 - **Details**: a backdrop, season tabs, watched and upcoming episodes, one-click Play/Continue, and
   a stream list sorted by seeders, with quality filters, size and source.
 - **Autoplay**: picking an episode (or Play) starts the best source right away. The order is 1080p
-  first, then 720p, 4K and SD, and the most seeders within each quality. If a source fails, use
+  first, then 720p, 4K and SD, and the most seeders within each quality. When you continue a
+  video, the source you watched it from is used again (it's already in the cache). If a source fails, use
   **Try the next source**, or close the player and pick one from the list.
 - **Subtitles**: Romanian is picked automatically, from the file if it has a Romanian track and
   otherwise from [OpenSubtitles](https://www.opensubtitles.org/) (or any installed subtitles addon).
   All languages are in the player's subtitles menu. Z / X shift the timing, and legacy
-  Windows-1250 files are decoded correctly.
+  Windows-1250 files are decoded correctly. Your last pick is remembered: the same video gets
+  the same track back, and the next episode gets the same language (or stays off).
 - **Torrent streaming** with [librqbit](https://github.com/ikatson/rqbit). It supports HTTP range
   requests and seeking, and downloads only the selected file.
 - **2 GB cache**: what you've watched stays on disk, together with the torrent metadata. Replaying

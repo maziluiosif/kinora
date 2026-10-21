@@ -37,12 +37,14 @@ pub struct Detail {
     streams: Option<StreamList>,
     /// Scroll the episode list to the last watched episode on the next frame.
     reveal_last: bool,
+    /// Start playing (or continue) once the metadata is in.
+    play: bool,
 }
 
 impl Detail {
-    pub fn new(env: &Env, kind: String, id: String) -> Self {
+    pub fn new(env: &Env, kind: String, id: String, play: bool) -> Self {
         let meta = load_meta(env, &kind, &id);
-        Detail { kind, id, meta, initialized: false, season: None, streams: None, reveal_last: true }
+        Detail { kind, id, meta, initialized: false, season: None, streams: None, reveal_last: true, play }
     }
 
     fn is_series(&self, meta: &Meta) -> bool {
@@ -72,7 +74,7 @@ impl Detail {
         let Some(Ok(meta)) = self.meta.get().map(|m| m.clone()) else { return false };
         let Some(list) = &mut self.streams else { return false };
         let Some(Ok(streams)) = list.streams.get() else { return false };
-        let Some(s) = best_stream(streams, &list.tried).cloned() else { return false };
+        let Some(s) = best_stream(streams, &list.tried, None).cloned() else { return false };
         list.tried.insert(s.key());
         let (video, video_id) = (list.video.clone(), list.video_id.clone());
         env.actions.push(play_action(&self.kind, &self.id, &meta, s, video.as_ref(), video_id));
@@ -112,9 +114,14 @@ impl Detail {
             if self.is_series(&meta) && !meta.videos.is_empty() {
                 let last = lib.as_ref().and_then(|l| l.last_video.as_deref());
                 self.season = meta.videos.iter().find(|v| Some(v.id.as_str()) == last).map(|v| v.season);
+                if self.play
+                    && let Some((video, _)) = up_next(&meta, lib.as_ref())
+                {
+                    self.open_streams(env, Some(&video), video.id.clone(), true);
+                }
             } else {
                 let vid = meta.behavior_hints.default_video_id.clone().unwrap_or_else(|| self.id.clone());
-                self.open_streams(env, None, vid, false);
+                self.open_streams(env, None, vid, self.play);
             }
         }
 
@@ -223,7 +230,7 @@ impl Detail {
         }
         let Some(list) = &mut self.streams else { return };
         let best = match list.streams.get() {
-            Some(Ok(s)) => best_stream(s, &HashSet::new()).cloned(),
+            Some(Ok(s)) => best_stream(s, &HashSet::new(), last_stream(lib, &list.video_id)).cloned(),
             _ => None,
         };
         let loading = list.streams.get().is_none();
@@ -292,8 +299,9 @@ impl Detail {
                 empty_state(ui, Icon::Search, "No streams found", "None of your addons has a stream for this yet.");
             }
             Some(Ok(streams)) => {
+                let last = last_stream(env.lib_item(&self.id), &video_id).map(String::from);
                 if std::mem::take(&mut list.autoplay)
-                    && let Some(s) = best_stream(streams, &list.tried).cloned()
+                    && let Some(s) = best_stream(streams, &list.tried, last.as_deref()).cloned()
                 {
                     list.tried.insert(s.key());
                     env.actions.push(play_action(&self.kind, &self.id, meta, s, video.as_ref(), video_id.clone()));
@@ -453,9 +461,20 @@ fn backdrop(ui: &Ui, full: Rect, meta: &Meta) {
     gradient_v(p, rect.with_max_y(rect.top() + 60.0), BG.gamma_multiply(0.7), Color32::TRANSPARENT);
 }
 
-/// The stream to start automatically: well seeded first, then 1080p, 720p, 4K (the player shows
-/// at most 1080p, so 4K only costs bandwidth), SD; then the most seeders. `tried` are skipped.
-fn best_stream<'a>(streams: &'a [Stream], tried: &HashSet<String>) -> Option<&'a Stream> {
+/// The stream `video_id` was last played from, if it is the one being continued.
+fn last_stream<'a>(lib: Option<&'a LibItem>, video_id: &str) -> Option<&'a str> {
+    let lib = lib?;
+    if lib.last_video.as_deref() == Some(video_id) { lib.last_stream.as_deref() } else { None }
+}
+
+/// The stream to start automatically: the one `video` was last played from (already cached,
+/// and the saved position belongs to it), otherwise well seeded first, then 1080p, 720p, 4K
+/// (the player shows at most 1080p, so 4K only costs bandwidth), SD; then the most seeders.
+/// `tried` are skipped.
+fn best_stream<'a>(streams: &'a [Stream], tried: &HashSet<String>, last: Option<&str>) -> Option<&'a Stream> {
+    if let Some(s) = last.and_then(|k| streams.iter().find(|s| s.key() == k)).filter(|s| !tried.contains(&s.key())) {
+        return Some(s);
+    }
     streams
         .iter()
         .enumerate()
@@ -500,7 +519,7 @@ pub fn next_video<'a>(meta: &'a Meta, v: &Video) -> Option<&'a Video> {
 }
 
 fn lib_update(kind: &str, id: &str, meta: &Meta, saved: Option<bool>, video: Option<String>) -> LibUpdate {
-    LibUpdate { id: id.into(), kind: kind.into(), name: meta.name.clone(), poster: meta.poster.clone(), saved, video }
+    LibUpdate { id: id.into(), kind: kind.into(), name: meta.name.clone(), poster: meta.poster.clone(), saved, video, stream: None }
 }
 
 fn play_action(kind: &str, id: &str, meta: &Meta, stream: Stream, video: Option<&Video>, video_id: String) -> Action {
@@ -508,10 +527,11 @@ fn play_action(kind: &str, id: &str, meta: &Meta, stream: Stream, video: Option<
         Some(v) => format!("{} · {} {}", meta.name, v.code(), v.label()),
         None => meta.name.clone(),
     };
+    let lib = LibUpdate { stream: Some(stream.key()), ..lib_update(kind, id, meta, None, Some(video_id)) };
     Action::Play(Box::new(PlayReq {
         stream,
         title,
-        lib: lib_update(kind, id, meta, None, Some(video_id)),
+        lib,
         video: video.cloned(),
         next: video.and_then(|v| next_video(meta, v)).cloned(),
     }))

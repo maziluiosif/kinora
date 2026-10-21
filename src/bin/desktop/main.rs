@@ -84,7 +84,8 @@ pub enum Route {
     Board,
     Discover(Option<CatalogRef>),
     Search(String),
-    Detail { kind: String, id: String },
+    /// `play` starts the best source (or continues) as soon as the page has loaded.
+    Detail { kind: String, id: String, play: bool },
     Library,
     Addons,
 }
@@ -233,7 +234,7 @@ fn open(env: &Env, route: Route) -> Page {
         Route::Board => Page::Board(Board::new(env)),
         Route::Discover(cat) => Page::Discover(Discover::new(env, cat)),
         Route::Search(q) => Page::Search(Search::new(env, q)),
-        Route::Detail { kind, id } => Page::Detail(Box::new(Detail::new(env, kind, id))),
+        Route::Detail { kind, id, play } => Page::Detail(Box::new(Detail::new(env, kind, id, play))),
         Route::Library => Page::Library(LibraryPage::default()),
         Route::Addons => Page::Addons(Box::new(AddonsPage::new(env))),
     }
